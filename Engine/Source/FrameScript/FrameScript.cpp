@@ -1,6 +1,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <list>
+#include <string>
 #include <malloc.h>
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/FrameScript/FrameScript_Object.h"
@@ -45,6 +47,7 @@ TSHashTable<FrameScript_EventObject, HASHKEY_CONSTSTRI> s_scriptEventsHash;
 
 // STATIC: 0x00D3F7D0
 static TSFixedArray<FrameScript_EventObject*> s_scriptEvents;
+static std::list<std::string> s_interfaceEventNames;
 
 // STATIC: 0x00D3F7E0
 static char s_printIndent[128];
@@ -1448,6 +1451,7 @@ void FrameScript_Destroy() {
     s_mempool = nullptr;
     s_scriptEventsHash.Clear();
     s_scriptEvents.Clear();
+    s_interfaceEventNames.clear();
 }
 
 // VERIFY: 8009da99 manual
@@ -1630,4 +1634,20 @@ void FrameScript_CreateEvents(const char** names, uint32_t count) {
             s_scriptEvents[i] = nullptr;
         }
     }
+}
+
+uint32_t FrameScript_RegisterInterfaceEvent(const char* name) {
+    auto* event = s_scriptEventsHash.Ptr(name);
+    for (uint32_t i = 0; i < s_scriptEvents.Count(); ++i) {
+        if (event && s_scriptEvents[i] == event) { return i; }
+    }
+    if (s_interfaceEventNames.size() >= 4096) { return UINT32_MAX; }
+    if (!event) {
+        s_interfaceEventNames.emplace_back(name);
+        event = s_scriptEventsHash.New(s_interfaceEventNames.back().c_str(), 0, 0);
+    }
+    uint32_t index = s_scriptEvents.Count();
+    s_scriptEvents.SetCount(index + 1);
+    s_scriptEvents[index] = event;
+    return index;
 }

@@ -37,7 +37,7 @@ void CStatus::Add(const CStatus& source) {
     CStatus& src = const_cast<CStatus&>(source);
 
     for (STATUSENTRY* entry = src.m_statusList.Head(); entry; entry = src.m_statusList.Next(entry)) {
-        this->Add(entry->m_severity, entry->m_text);
+        this->Add(entry->m_severity, "%s", entry->m_text);
     }
 }
 

@@ -28,7 +28,7 @@ CWOWClientStatus::~CWOWClientStatus() {
     }
 
     for (STATUSENTRY* entry = this->m_statusList.Head(); entry; entry = this->m_statusList.Next(entry)) {
-        SLogWrite(this->m_log, entry->m_text);
+        SLogWrite(this->m_log, "%s", entry->m_text);
     }
 
     SLogClose(this->m_log);

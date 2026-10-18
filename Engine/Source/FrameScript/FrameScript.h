@@ -41,6 +41,7 @@ extern const luaL_Reg s_extraFuncs[];
 
 int32_t FrameScript_CompileFunction(const char* name, const char* wrapper, const char* body, CStatus* status);
 void FrameScript_CreateEvents(const char** names, uint32_t count);
+uint32_t FrameScript_RegisterInterfaceEvent(const char* name);
 void FrameScript_Destroy();
 void FrameScript_Execute(const char* source, const char* filename, const char* taint);
 void FrameScript_Execute(int32_t function, FrameScript_Object* object, int32_t argCount, const char* taint, FrameScript_EventObject* event);

@@ -151,14 +151,30 @@ Implemented so far:
   responses preserve the last valid list. Configuration getters consume the
   server's `0x058D` settings; absent settings return nil.
 - Error-tooltip spacing and UTF-8 clipboard export for the original error UI.
+- Shared libraries load from their original `Interface/LibraryXML/*.toc` archives
+  on demand, with recursion protection and the original taint handling. This
+  restores the loader used by LibStub/Ace and dependent addons.
+- In-game unit-frame APIs expose casting spell IDs, assigned role keys, scaling
+  flags, and absorb/heal-absorb totals from the server's `0x0673` aura amounts.
+  Spell charges consume `0x09C2`, `0x09C4`, and `0x09C5` and their original DBC
+  categories. Interface events support updates to these displays.
+- JSON decoding for saved settings, item-name/quality cache lookup, profession
+  skill lookup, camera FoV, core nameplate cast-bar visibility, and protected
+  action checks. Missing specialization slots return nil instead of interrupting
+  the loot-specialization menu. Log sections identify each new UI context.
 
 This is incomplete. Class-preview spell effects, custom animations/transforms,
 premium customization-unlock rules, and many in-game talent/collection APIs still
 need implementation. Conditional class roles requiring learned spells and
 Ascension-specific spell-description expressions are not yet evaluated. Loading
 the scripts does not establish visual or functional
-parity with `Ascension.exe`. Graphics options `useUiScale`, `lodObjectCull`, and
-`useRaidVideoSettings` also currently report missing CVars. Settings persistence
+parity with `Ascension.exe`. `ObjectSelectionCircleTexture`, `lodObjectCull`,
+`useRaidVideoSettings`, and `autoAcceptTrades` are registered as persistent UI
+preferences so settings-panel construction can continue; alternate selection
+textures, custom culling/raid profiles, and automatic trade acceptance are not
+implemented. Nameplate modes 1 and 2 currently use the core cast-bar visibility;
+custom rune resources remain separate from the core Death Knight rune UI.
+Settings persistence
 accepts simple names only; the archive/content update system is not supported.
 The local CoA server does not implement realm migration, so the merge API reports
 it unavailable. Archetype availability remains controlled by the archived UI's
@@ -166,7 +182,8 @@ realm-name check and the server's `CONFIG_CHARACTER_CREATION_ARCHETYPES_ENABLED`
 setting. Build and parser checks do not substitute for rendered UI/game testing.
 
 The standalone parser checks cover all three class modes, character lists,
-server settings, addons, and truncated packets using synthetic data; an optional local
+server settings, addons, aura amounts, spell charges/recovery, JSON settings,
+and truncated packets using synthetic data; an optional local
 `ChrSpecs.dbc` can be passed to the executable without adding it to the repository:
 
 ```powershell

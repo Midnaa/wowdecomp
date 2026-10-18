@@ -2,6 +2,9 @@
 #include "WoW/Source/UIUtil/AscensionRealm.h"
 #include "WoW/Source/UIUtil/AscensionAddons.h"
 #include "WoW/Source/UIUtil/AscensionProtocol.h"
+#include "WoW/Source/UIUtil/AscensionAuraAmounts.h"
+#include "WoW/Source/UIUtil/AscensionSpellCharges.h"
+#include "WoW/Source/UIUtil/AscensionJSON.h"
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -28,6 +31,58 @@ static void Text(std::vector<uint8_t>& bytes, const char* value) {
 static void Key(std::vector<uint8_t>& bytes, const char* value) {
     Append(bytes, uint32_t(std::strlen(value)));
     bytes.insert(bytes.end(), value, value + std::strlen(value));
+}
+
+static void CheckGameUIData() {
+    AscensionAuraAmounts amounts;
+    std::vector<uint8_t> aura;
+    Append(aura, uint64_t(123)); Append(aura, int32_t(7));
+    Append(aura, uint64_t(456)); Append(aura, uint32_t(17));
+    Append(aura, int32_t(400)); Append(aura, int32_t(20)); Append(aura, int32_t(-5));
+    uint64_t target = 0;
+    Require(amounts.Read(aura.data(), aura.size(), target), "Aura amounts rejected");
+    Require(target == 123 && amounts.units.at(123).at(7).amounts[0] == 400, "Aura amount keyed incorrectly");
+    for (size_t i = 0; i < aura.size(); ++i) {
+        Require(!amounts.Read(aura.data(), i, target), "Truncated aura amounts accepted");
+    }
+    Require(amounts.units.at(123).at(7).amounts[0] == 400, "Invalid aura packet replaced state");
+    aura.resize(24);
+    Put32(aura, 8, UINT32_MAX);
+    Require(amounts.Read(aura.data(), aura.size(), target) && amounts.units.empty(), "Aura removal did not clear amounts");
+
+    AscensionSpellCharges charges;
+    std::vector<uint8_t> charge;
+    Append(charge, uint32_t(542)); Append(charge, uint32_t(5000)); Append(charge, uint32_t(2));
+    Require(charges.Read(0x09C5, charge.data(), charge.size(), 1000), "Charge update rejected");
+    const auto& state = charges.entries.at(542);
+    Require(state.Restored(5999, 10000) == 0 && state.Restored(6000, 10000) == 1
+        && state.Restored(16000, 10000) == 2, "Charge recovery time incorrect");
+    for (size_t i = 0; i < charge.size(); ++i) {
+        Require(!charges.Read(0x09C5, charge.data(), i, 2000), "Truncated charge update accepted");
+    }
+    Require(charges.entries.at(542).received == 1000, "Malformed charge update replaced state");
+    std::vector<uint8_t> bulk;
+    Append(bulk, uint32_t(1)); Append(bulk, uint32_t(323)); Append(bulk, uint32_t(800)); Append(bulk, uint8_t(1));
+    Require(charges.Read(0x09C4, bulk.data(), bulk.size(), 3000)
+        && charges.entries.count(323) && !charges.entries.count(542), "Charge snapshot did not replace old categories");
+    Require(!charges.Read(0x09C2, bulk.data(), bulk.size(), 3000), "Charge reset accepted unexpected payload");
+    Require(charges.Read(0x09C2, nullptr, 0, 3000) && charges.entries.empty(), "Charge reset failed");
+
+    AscensionJSON json;
+    AscensionJSONValue value;
+    const char* text = "{\"enabled\":false,\"count\":1.25e2,\"values\":[null,true,\"\\uD83D\\uDE00\"]}";
+    Require(json.Parse(text, std::strlen(text), value), "Valid settings JSON rejected");
+    Require(value.object[0].second.type == AscensionJSONValue::Boolean && value.object[0].second.number == 0
+        && value.object[1].second.number == 125, "JSON false or numeric value lost");
+    Require(value.object[2].second.array[0].type == AscensionJSONValue::Null
+        && value.object[2].second.array[2].string == "\xF0\x9F\x98\x80", "JSON Unicode or null value lost");
+    for (const char* invalid : { "", "{", "[1,]", "01", "1.", "nullx", "1e999", "\"\\uD800\"", "{\"x\":true,}" }) {
+        Require(!json.Parse(invalid, std::strlen(invalid), value), "Malformed JSON accepted");
+    }
+    std::string deep(100, '[');
+    deep += "0";
+    deep.append(100, ']');
+    Require(!json.Parse(deep.data(), deep.size(), value), "Unbounded JSON nesting accepted");
 }
 
 static void CheckExtendedPackets() {
@@ -75,6 +130,7 @@ static void CheckExtendedPackets() {
 
 int main(int argc, char** argv) {
     try {
+        CheckGameUIData();
         CheckExtendedPackets();
         AscensionDBC table;
         Require(!table.Assign(nullptr, 0, 2), "Empty DBC accepted");

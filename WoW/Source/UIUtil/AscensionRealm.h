@@ -8,6 +8,7 @@
 
 struct AscensionRealm {
     uint32_t id = 0;
+    uint32_t ruleset = 0;
     std::array<uint8_t, 8> flags{};
     bool received = false;
 
@@ -28,6 +29,7 @@ struct AscensionRealm {
             return false;
         }
         std::memcpy(&id, bytes, sizeof(id));
+        std::memcpy(&ruleset, bytes + 4, sizeof(ruleset));
         std::memcpy(flags.data(), bytes + 36, flags.size());
         received = true;
         return true;

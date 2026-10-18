@@ -3,6 +3,7 @@
 #include "AscensionRealm.h"
 #include "AscensionAddons.h"
 #include "AscensionProtocol.h"
+#include "AscensionGameUI.h"
 #include <windows.h>
 #include <algorithm>
 #include <initializer_list>
@@ -146,6 +147,17 @@ int IsKeyDown(lua_State* L) {
 
 int GetRealmId(lua_State* L) {
     lua_pushnumber(L, s_realm.id);
+    return 1;
+}
+
+int GetRealmMaxLevel(lua_State* L) {
+    auto configured = s_config.integers.find("CONFIG_MAX_PLAYER_LEVEL");
+    if (configured != s_config.integers.end() && configured->second > 0) {
+        lua_pushinteger(L, configured->second);
+    } else if (s_realm.received && s_realm.ruleset <= 2) {
+        const uint32_t levels[] = { 60, 70, 80 };
+        lua_pushnumber(L, levels[s_realm.ruleset]);
+    } else { lua_pushnil(L); }
     return 1;
 }
 
@@ -713,6 +725,7 @@ void StringArray(lua_State* L, uint32_t row, const char* name, uint32_t first, c
 
 int GetSpecInfo(lua_State* L) {
     const char* className = luaL_checkstring(L, 1);
+    if (!lua_isstring(L, 2)) { lua_pushnil(L); return 1; }
     const char* specName = luaL_checkstring(L, 2);
     for (uint32_t row = 0; row < s_specs.Count(); ++row) {
         if (std::strcmp(className, s_specs.String(row, 1)) || std::strcmp(specName, s_specs.String(row, 2))) {
@@ -769,10 +782,21 @@ void AscensionUI_RegisterFunctions() {
         return;
     }
     lua_State* L = FrameScript_GetContext();
+    AscensionGameUI_Register();
+    std::error_code logError;
+    std::filesystem::create_directories("Logs", logError);
+    if (FILE* log = std::fopen("Logs/AscensionUI.log", "a")) {
+        SYSTEMTIME time;
+        GetLocalTime(&time);
+        std::fprintf(log, "\n--- UI context initialized %04u-%02u-%02u %02u:%02u:%02u ---\n",
+            time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond);
+        std::fclose(log);
+    }
     CVar::Register("loadUnknownAddOns", "Show addons not listed by the realm", 1, "0",
         nullptr, CATEGORY_DEFAULT, false, nullptr, false);
     FrameScript_RegisterFunction("IsKeyDown", IsKeyDown);
     FrameScript_RegisterFunction("GetRealmId", GetRealmId);
+    FrameScript_RegisterFunction("GetRealmMaxLevel", GetRealmMaxLevel);
     FrameScript_RegisterFunction("HasVisitedArea52ThisSession", HasVisitedArea52ThisSession);
     FrameScript_RegisterFunction("GetClassInfo", GetClassInfo);
     FrameScript_RegisterFunction("GetClassInfoByName", GetClassInfoByName);
@@ -879,6 +903,13 @@ bool AscensionUI_IsClassAllowed(uint32_t classID) {
     return !s_enabled || !s_realm.received || s_realm.CanCreateClass(classID);
 }
 
+void AscensionUI_RegisterInterfaceEvents() {
+    if (!s_enabled) { return; }
+    for (const char* name : { "UNIT_HEAL_PREDICTION", "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED", "SPELL_UPDATE_CHARGES" }) {
+        FrameScript_RegisterInterfaceEvent(name);
+    }
+}
+
 bool AscensionUI_GetClassRoles(uint32_t classID, uint8_t& roles) {
     if (s_enabled) {
         for (uint32_t row = 0; row < s_classRoles.Count(); ++row) {
@@ -893,6 +924,7 @@ bool AscensionUI_GetClassRoles(uint32_t classID, uint8_t& roles) {
 }
 
 void AscensionUI_ResetRealm() {
+    AscensionGameUI_ResetRealm();
     s_realm = {};
     s_addons.entries.clear();
     s_characterOrder.clear();
@@ -905,14 +937,16 @@ void AscensionUI_ResetRealm() {
 bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
     if (!s_enabled || (opcode != 0x09BC && opcode != 0x094E
         && opcode != 0x076F && opcode != 0x0770 && opcode != 0x0771
-        && opcode != 0x075E && opcode != 0x075F && opcode != 0x0760 && opcode != 0x058D)) {
+        && opcode != 0x075E && opcode != 0x075F && opcode != 0x0760 && opcode != 0x058D
+        && opcode != 0x0673 && opcode != 0x09C2 && opcode != 0x09C4 && opcode != 0x09C5)) {
         return false;
     }
     if (message->m_read <= message->m_size) {
         uint32_t size = message->m_size - message->m_read;
         void* data = nullptr;
         message->GetDataInSitu(data, size);
-        if (opcode == 0x09BC) {
+        if (AscensionGameUI_ProcessMessage(opcode, data, size)) {
+        } else if (opcode == 0x09BC) {
             if (s_realm.Read(data, size) && s_realm.id == 11) {
                 s_visitedArea52 = true;
             }

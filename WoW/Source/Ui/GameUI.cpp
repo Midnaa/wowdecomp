@@ -1,4 +1,5 @@
 #include "GameUI.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include "WoW/Source/DB/Rec/FileDataRec.h"
 #include "WoW/Source/DB/Rec/MovieFileDataRec.h"
 #include "WoW/Source/DB/Rec/MovieRec.h"
@@ -1721,6 +1722,7 @@ void CGGameUI::InitializeFrameXML() {
     FrameScript_Initialize(g_scriptProfileCVar->m_intValue);
     LoadScriptFunctions();
     FrameScript_CreateEvents(g_scriptEvents, NUM_SCRIPT_EVENTS);
+    AscensionUI_RegisterInterfaceEvents();
     CGGameUI::RegisterGameCVars();
     CGUIBindings::Initialize();
     CGWorldFrame::RegisterFrames();
