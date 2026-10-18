@@ -8,5 +8,6 @@ void AscensionUI_RegisterFunctions();
 void AscensionUI_ResetRealm();
 bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message);
 bool AscensionUI_GetClassRoles(uint32_t classID, uint8_t& roles);
+bool AscensionUI_IsClassAllowed(uint32_t classID);
 
 #endif

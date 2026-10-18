@@ -2,6 +2,7 @@
 #include "AscensionDBC.h"
 #include "AscensionRealm.h"
 #include "AscensionAddons.h"
+#include "AscensionProtocol.h"
 #include <windows.h>
 #include <algorithm>
 #include <initializer_list>
@@ -19,7 +20,12 @@
 #include "Engine/Source/Event/Event.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/DB/Rec/ChrClassesRec.h"
+#include "WoW/Source/DB/Rec/SpellRec.h"
+#include "WoW/Source/DB/Rec/SpellIconRec.h"
+#include "WoW/Source/Glue/CharacterSelection.h"
+#include "WoW/Source/Glue/CGlueMgr.h"
 #include "WoW/Source/Glue/AscensionCharacterCreation.h"
+#include "WoW/Source/Ui/QuestTextParser.h"
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 
 namespace {
@@ -27,6 +33,8 @@ AscensionDBC s_specs;
 AscensionDBC s_classRoles;
 AscensionRealm s_realm;
 AscensionAddons s_addons;
+AscensionCharacterList s_characterList;
+AscensionConfig s_config;
 struct CreationTable {
     AscensionDBC data;
     const char* filename;
@@ -78,6 +86,40 @@ int GetErrorCallstackHeight(lua_State* L) {
 
 int SendSystemMessage(lua_State* L) {
     ConsoleWrite(luaL_checkstring(L, 1), DEFAULT_COLOR);
+    return 0;
+}
+
+int CopyToClipboard(lua_State* L) {
+    size_t length;
+    const char* text = luaL_checklstring(L, 1, &length);
+    if (length > 1024 * 1024 || std::memchr(text, 0, length)) {
+        return luaL_error(L, "Clipboard text is too long or contains a null byte");
+    }
+    int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, static_cast<int>(length), nullptr, 0);
+    if ((!count && length) || !OpenClipboard(nullptr)) { lua_pushboolean(L, false); return 1; }
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, (size_t(count) + 1) * sizeof(wchar_t));
+    bool success = false;
+    if (memory) {
+        auto* output = static_cast<wchar_t*>(GlobalLock(memory));
+        if (output) {
+            MultiByteToWideChar(CP_UTF8, 0, text, static_cast<int>(length), output, count);
+            output[count] = 0;
+            GlobalUnlock(memory);
+            success = EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, memory);
+        }
+        if (!success) { GlobalFree(memory); }
+    }
+    CloseClipboard();
+    lua_pushboolean(L, success);
+    return 1;
+}
+
+int TooltipAddSpacer(lua_State* L) {
+    luaL_checktype(L, 1, LUA_TTABLE);
+    lua_getfield(L, 1, "AddLine");
+    lua_pushvalue(L, 1);
+    lua_pushstring(L, " ");
+    lua_call(L, 2, 0);
     return 0;
 }
 
@@ -150,6 +192,118 @@ int GetClassInfo(lua_State* L) {
         ? g_chrClassesDB.GetRecord(static_cast<int32_t>(id)) : nullptr;
     return PushClassInfo(L, entry);
 }
+
+int GetSpellData(lua_State* L) {
+    lua_Integer id = luaL_checkinteger(L, 1);
+    SpellRec spell;
+    if (id <= 0 || id > INT32_MAX || !g_spellDB.GetRecord(static_cast<int32_t>(id), &spell)) {
+        return 0;
+    }
+    char description[16384] = {};
+    SpellParserParseText(&spell, description, sizeof(description), 0, 0, 0, 0, 1, 0);
+    const auto* icon = g_spellIconDB.GetRecord(spell.m_spellIconID);
+    lua_pushstring(L, spell.m_name ? spell.m_name : "");
+    lua_pushstring(L, description);
+    lua_pushstring(L, icon && icon->m_textureFilename && *icon->m_textureFilename
+        ? icon->m_textureFilename : "Interface\\Icons\\INV_Misc_QuestionMark");
+    return 3;
+}
+
+int GetSpellDescription(lua_State* L) {
+    int results = GetSpellData(L);
+    if (!results) { return 0; }
+    lua_pop(L, 1);
+    return 1;
+}
+
+int GetCharacterCounts(lua_State* L) {
+    if (!s_characterList.received) { return 0; }
+    lua_pushnumber(L, s_characterList.maximum);
+    lua_pushnumber(L, s_characterList.total);
+    lua_pushnumber(L, s_characterList.active);
+    lua_pushnumber(L, s_characterList.inactive);
+    return 4;
+}
+
+int GetCharacterEntries(lua_State* L) {
+    lua_newtable(L);
+    int index = 1;
+    for (const auto& entry : s_characterList.entries) {
+        lua_newtable(L);
+        const char* names[] = { "guid", "level", "race", "class", "gender", "zone" };
+        const uint32_t values[] = { entry.guid, entry.level, entry.race, entry.classID, entry.sex, entry.zone };
+        for (int i = 0; i < 6; ++i) {
+            lua_pushnumber(L, values[i]);
+            lua_setfield(L, -2, names[i]);
+        }
+        lua_pushlstring(L, entry.name.data(), entry.name.size());
+        lua_setfield(L, -2, "name");
+        lua_pushboolean(L, entry.active);
+        lua_setfield(L, -2, "active");
+        lua_pushboolean(L, entry.online);
+        lua_setfield(L, -2, "online");
+        const auto* classInfo = g_chrClassesDB.GetRecord(entry.classID);
+        if (classInfo) {
+            lua_pushstring(L, classInfo->m_filename);
+            lua_setfield(L, -2, "classFile");
+            lua_pushstring(L, classInfo->m_name);
+            lua_setfield(L, -2, "className");
+            lua_pushstring(L, classInfo->m_name);
+            lua_setfield(L, -2, "classLocalized");
+        }
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+
+int ChangeCharacterActive(lua_State* L) {
+    lua_Number guid = luaL_checknumber(L, 1);
+    if (!std::isfinite(guid) || guid < 1 || guid > UINT32_MAX || guid != std::floor(guid)) {
+        return luaL_error(L, "Invalid character GUID");
+    }
+    bool known = false;
+    for (const auto& entry : s_characterList.entries) {
+        known |= entry.guid == static_cast<uint32_t>(guid);
+    }
+    if (!known || !ClientServices::Connection()->m_authenticated) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
+    CDataStore message;
+    message.Put(static_cast<uint32_t>(lua_tointeger(L, lua_upvalueindex(1))));
+    message.Put(static_cast<uint32_t>(guid));
+    message.Finalize();
+    ClientServices::Send2(&message);
+    lua_pushboolean(L, true);
+    return 1;
+}
+
+template<class T> int PushConfig(lua_State* L, const std::map<std::string, T>& values, bool boolean = false) {
+    const char* key = luaL_checkstring(L, 1);
+    auto found = values.find(key);
+    if (found == values.end()) { lua_pushnil(L); }
+    else if (boolean) { lua_pushboolean(L, found->second != 0); }
+    else { lua_pushnumber(L, found->second); }
+    return 1;
+}
+int GetIntConfig(lua_State* L) { return PushConfig(L, s_config.integers); }
+int GetBoolConfig(lua_State* L) { return PushConfig(L, s_config.booleans, true); }
+int GetFloatConfig(lua_State* L) { return PushConfig(L, s_config.floats); }
+int GetRateConfig(lua_State* L) { return PushConfig(L, s_config.rates); }
+template<class T> int PushVectorConfig(lua_State* L, const std::map<std::string, std::vector<T>>& values) {
+    const char* key = luaL_checkstring(L, 1);
+    auto found = values.find(key);
+    if (found == values.end()) { lua_pushnil(L); return 1; }
+    lua_newtable(L);
+    int index = 1;
+    for (T value : found->second) {
+        lua_pushnumber(L, value);
+        lua_rawseti(L, -2, index++);
+    }
+    return 1;
+}
+int GetIntVectorConfig(lua_State* L) { return PushVectorConfig(L, s_config.integerVectors); }
+int GetFloatVectorConfig(lua_State* L) { return PushVectorConfig(L, s_config.floatVectors); }
 
 int GetClassInfoByName(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
@@ -354,6 +508,62 @@ int GetClassGuideRoleInfo(lua_State* L) {
 int GetClassGuideSubroleInfo(lua_State* L) {
     return CreationInfo(L, 4, { 2001, 2, 3, 4, 1005, 1022 });
 }
+
+int GetArchetypeInfo(lua_State* L) {
+    uint32_t id = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    const auto& data = s_creationTables[2].data;
+    for (uint32_t row = 0; row < data.Count(); ++row) {
+        if (data.Value(row, 0) != id) { continue; }
+        lua_pushstring(L, data.String(row, 2));
+        lua_newtable(L);
+        for (uint32_t column = 3; column < 8; ++column) {
+            if (data.Value(row, column)) {
+                lua_pushnumber(L, data.Value(row, column));
+                lua_rawseti(L, -2, column - 2);
+            }
+        }
+        lua_pushstring(L, data.String(row, 8));
+        for (uint32_t first : { 9u, 12u }) {
+            lua_newtable(L);
+            for (uint32_t column = first; column < first + 3; ++column) {
+                lua_pushstring(L, data.String(row, column));
+                lua_rawseti(L, -2, column - first + 1);
+            }
+        }
+        for (uint32_t column = 15; column < 19; ++column) { lua_pushstring(L, data.String(row, column)); }
+        for (uint32_t column : { 19u, 36u, 53u }) { lua_pushstring(L, Localized(data, row, column)); }
+        lua_pushstring(L, data.String(row, 155));
+        return 13;
+    }
+    for (int i = 0; i < 13; ++i) { lua_pushnil(L); }
+    return 13;
+}
+
+int GetArchetypeSpellDescription(lua_State* L) {
+    uint32_t id = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    uint32_t spell = static_cast<uint32_t>(luaL_checkinteger(L, 2));
+    const auto& data = s_creationTables[2].data;
+    for (uint32_t row = 0; row < data.Count(); ++row) {
+        if (data.Value(row, 0) != id) { continue; }
+        for (uint32_t column = 3; column < 8; ++column) {
+            if (data.Value(row, column) == spell) {
+                const char* description = Localized(data, row, 70 + (column - 3) * 17);
+                lua_pushstring(L, *description ? description : nullptr);
+                return 1;
+            }
+        }
+    }
+    lua_pushnil(L);
+    return 1;
+}
+
+int NoRealmMerge(lua_State* L) {
+    // The local CoA server has no realm-merge protocol; advertise no available merge.
+    lua_pushboolean(L, false);
+    return 1;
+}
+int GetMergeOptions(lua_State* L) { lua_newtable(L); return 1; }
+int GetMergeTarget(lua_State* L) { lua_pushnil(L); return 1; }
 
 int RegisterSavedCVar(lua_State* L) {
     const char* name = luaL_checkstring(L, 1);
@@ -566,6 +776,8 @@ void AscensionUI_RegisterFunctions() {
     FrameScript_RegisterFunction("HasVisitedArea52ThisSession", HasVisitedArea52ThisSession);
     FrameScript_RegisterFunction("GetClassInfo", GetClassInfo);
     FrameScript_RegisterFunction("GetClassInfoByName", GetClassInfoByName);
+    FrameScript_RegisterFunction("GetSpellData", GetSpellData);
+    FrameScript_RegisterFunction("GetSpellDescription", GetSpellDescription);
     FrameScript_RegisterFunction("GetCharacterSelectionSortOrder", GetCharacterSelectionSortOrder);
     FrameScript_RegisterFunction("SetCharacterSelectionSortOrder", SetCharacterSelectionSortOrder);
     FrameScript_RegisterFunction("GetCharacterSelectionMailData", GetCharacterSelectionMailData);
@@ -576,6 +788,29 @@ void AscensionUI_RegisterFunctions() {
     };
     luaL_register(L, "C_Logger", logger);
     lua_pop(L, 1);
+    const luaL_Reg config[] = {
+        { "GetIntConfig", GetIntConfig }, { "GetBoolConfig", GetBoolConfig },
+        { "GetFloatConfig", GetFloatConfig }, { "GetRateConfig", GetRateConfig },
+        { "GetIntVectorConfig", GetIntVectorConfig }, { "GetFloatVectorConfig", GetFloatVectorConfig },
+        { nullptr, nullptr }
+    };
+    luaL_register(L, "C_Config", config);
+    lua_pop(L, 1);
+    const luaL_Reg characterList[] = { { "GetCounts", GetCharacterCounts }, { "GetEntries", GetCharacterEntries }, { nullptr, nullptr } };
+    luaL_register(L, "C_CharacterList", characterList);
+    for (const auto& action : { std::make_pair("RequestActivate", 0x072E), std::make_pair("RequestDeactivate", 0x072F) }) {
+        lua_pushinteger(L, action.second);
+        lua_pushcclosure(L, ChangeCharacterActive, 1);
+        lua_setfield(L, -2, action.first);
+    }
+    lua_pop(L, 1);
+    const luaL_Reg merge[] = {
+        { "IsMergeAvailable", NoRealmMerge }, { "NeedsSetTargetRealm", NoRealmMerge },
+        { "GetAvailableOptions", GetMergeOptions }, { "GetTargetRealm", GetMergeTarget },
+        { "SetTargetRealm", NoRealmMerge }, { nullptr, nullptr }
+    };
+    luaL_register(L, "C_RealmMerge", merge);
+    lua_pop(L, 1);
     FrameScript_RegisterFunction("RegisterSavedCVar", RegisterSavedCVar);
     FrameScript_RegisterFunction("ReadCustomWTF", ReadCustomWTF);
     FrameScript_RegisterFunction("WriteCustomWTF", WriteCustomWTF);
@@ -584,6 +819,8 @@ void AscensionUI_RegisterFunctions() {
     FrameScript_RegisterFunction("GetCallstackHeight", GetCallstackHeight);
     FrameScript_RegisterFunction("GetErrorCallstackHeight", GetErrorCallstackHeight);
     FrameScript_RegisterFunction("SendSystemMessage", SendSystemMessage);
+    FrameScript_RegisterFunction("Internal_CopyToClipboard", CopyToClipboard);
+    FrameScript_RegisterFunction("GameTooltip_AddSpacer", TooltipAddSpacer);
     LoadTable(s_specs, "DBFilesClient\\ChrSpecs.dbc", 65);
     LoadTable(s_classRoles, "DBFilesClient\\ChrClassesRoles.dbc", 11);
     const luaL_Reg classInfo[] = { { "GetAllSpecs", GetAllSpecs }, { "GetSpecInfo", GetSpecInfo }, { nullptr, nullptr } };
@@ -618,6 +855,8 @@ void AscensionUI_RegisterFunctions() {
         { "GetArchetypeCategoryInfo", GetArchetypeCategoryInfo },
         { "GetClassGuideRoleInfo", GetClassGuideRoleInfo },
         { "GetClassGuideSubroleInfo", GetClassGuideSubroleInfo },
+        { "GetArchetypeInfo", GetArchetypeInfo },
+        { "GetArchetypeSpellDescription", GetArchetypeSpellDescription },
         { nullptr, nullptr }
     };
     luaL_register(L, nullptr, creationInfo);
@@ -634,6 +873,10 @@ void AscensionUI_RegisterFunctions() {
             }
         }
     }
+}
+
+bool AscensionUI_IsClassAllowed(uint32_t classID) {
+    return !s_enabled || !s_realm.received || s_realm.CanCreateClass(classID);
 }
 
 bool AscensionUI_GetClassRoles(uint32_t classID, uint8_t& roles) {
@@ -655,11 +898,14 @@ void AscensionUI_ResetRealm() {
     s_characterOrder.clear();
     s_characterOrderReceived = false;
     s_characterExtras = {};
+    s_characterList = {};
+    s_config = {};
 }
 
 bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
     if (!s_enabled || (opcode != 0x09BC && opcode != 0x094E
-        && opcode != 0x076F && opcode != 0x0770 && opcode != 0x0771)) {
+        && opcode != 0x076F && opcode != 0x0770 && opcode != 0x0771
+        && opcode != 0x075E && opcode != 0x075F && opcode != 0x0760 && opcode != 0x058D)) {
         return false;
     }
     if (message->m_read <= message->m_size) {
@@ -672,6 +918,25 @@ bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
             }
         } else if (opcode == 0x094E) {
             s_addons.Read(data, size);
+        } else if (opcode == 0x058D) {
+            s_config.Read(data, size);
+        } else if (opcode == 0x075E) {
+            if (s_characterList.Read(data, size) && CGlueMgr::s_scriptFunctionsLoaded) {
+                FrameScript_SignalEvent(GLUE_EVENT_CHARACTER_LIST_UPDATED, nullptr);
+            }
+        } else if (opcode == 0x075F || opcode == 0x0760) {
+            AscensionPacketReader packet(data, size);
+            std::string result;
+            if (packet.Text(result, 128) && packet.Done() && CGlueMgr::s_scriptFunctionsLoaded) {
+                lua_State* L = FrameScript_GetContext();
+                int top = lua_gettop(L);
+                bool success = result == (opcode == 0x075F ? "ACTIVATE_CHARACTER_OK" : "DEACTIVATE_CHARACTER_OK");
+                lua_pushboolean(L, success);
+                lua_pushlstring(L, result.data(), result.size());
+                FrameScript_SignalEvent(opcode == 0x075F ? GLUE_EVENT_CHARACTER_ACTIVATE_RESULT
+                    : GLUE_EVENT_CHARACTER_DEACTIVATE_RESULT, L, 2);
+                lua_settop(L, top);
+            }
         } else if (opcode == 0x076F) {
             const auto* order = static_cast<const char*>(data);
             if (size && size <= 1024 && order[size - 1] == 0 && !std::memchr(order, 0, size - 1)) {

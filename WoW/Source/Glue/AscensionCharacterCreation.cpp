@@ -23,6 +23,11 @@ bool s_enabled = false;
 bool s_undressed = false;
 int32_t s_previewClass = 0;
 AscensionDBC s_classDetails;
+AscensionDBC s_archetypeDetails;
+AscensionDBC s_archetypes;
+AscensionDBC s_roles;
+AscensionDBC s_categories;
+uint32_t s_role = 0, s_category = 0, s_archetype = 0;
 bool s_cameraOverride = false;
 C3Vector s_cameraPosition;
 C3Vector s_zoomOrigin;
@@ -54,6 +59,7 @@ int PreviewClassOutfit(lua_State* L) {
         const auto& entry = g_chrClassesDB.m_records[i];
         if (entry.m_filename && !_stricmp(entry.m_filename, name)) {
             s_previewClass = entry.m_id;
+            s_role = s_category = s_archetype = 0;
             RefreshOutfit();
             break;
         }
@@ -76,6 +82,40 @@ int Dress(lua_State* L) {
 int Undress(lua_State* L) {
     s_undressed = true;
     RefreshOutfit();
+    return 0;
+}
+
+bool HasRow(const AscensionDBC& table, uint32_t id, uint32_t parent = 0) {
+    for (uint32_t row = 0; row < table.Count(); ++row) {
+        if (table.Value(row, 0) == id && (!parent || table.Value(row, 1) == parent)) { return true; }
+    }
+    return false;
+}
+
+int SetSelectedArchetype(lua_State* L) {
+    uint32_t role = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    uint32_t category = static_cast<uint32_t>(luaL_checkinteger(L, 2));
+    uint32_t archetype = static_cast<uint32_t>(luaL_checkinteger(L, 3));
+    if ((role && !HasRow(s_roles, role)) || (category && (!role || !HasRow(s_categories, category, role)))
+        || (archetype && (!category || !HasRow(s_archetypes, archetype, category)))) {
+        return luaL_error(L, "Invalid character archetype selection");
+    }
+    s_role = role;
+    s_category = category;
+    s_archetype = archetype;
+    s_previewClass = 0;
+    RefreshOutfit();
+    return 0;
+}
+
+int CycleCustomization(lua_State* L) {
+    lua_Integer id = luaL_checkinteger(L, 1);
+    lua_Integer direction = luaL_checkinteger(L, 2);
+    if (id < 1 || id > 5) { return luaL_error(L, "Invalid customization index"); }
+    if (CCharacterCreation::m_character) {
+        CCharacterCreation::CycleCharCustomization(static_cast<CHAR_CUSTOMIZATION_TYPE>(id - 1), direction < 0 ? -1 : 1);
+        RefreshOutfit();
+    }
     return 0;
 }
 
@@ -166,18 +206,26 @@ void RemoveEquipment(CCharacterComponent* character) {
 void AscensionCharacterCreation_Register(lua_State* L) {
     s_enabled = true;
     AscensionCharacterCreation_Reset();
-    void* bytes = nullptr;
-    uint32_t size = 0;
-    s_classDetails = {};
-    if (SFile::ReadFile(nullptr, "DBFilesClient\\CharacterCreationClassDetails.dbc", &bytes, &size, 0, 1, nullptr)) {
-        s_classDetails.Assign(bytes, size, 28);
-        SFile::Unload(bytes);
-    }
+    auto load = [](AscensionDBC& table, const char* name, uint32_t fields) {
+        void* bytes = nullptr;
+        uint32_t size = 0;
+        table = {};
+        if (SFile::ReadFile(nullptr, name, &bytes, &size, 0, 1, nullptr)) {
+            table.Assign(bytes, size, fields);
+            SFile::Unload(bytes);
+        }
+    };
+    load(s_classDetails, "DBFilesClient\\CharacterCreationClassDetails.dbc", 28);
+    load(s_archetypeDetails, "DBFilesClient\\CharacterCreationArchetypeDetails.dbc", 28);
+    load(s_archetypes, "DBFilesClient\\CharacterCreationArchetypes.dbc", 157);
+    load(s_roles, "DBFilesClient\\CharacterCreationArchetypeRoles.dbc", 71);
+    load(s_categories, "DBFilesClient\\CharacterCreationArchetypeCategories.dbc", 73);
     const luaL_Reg functions[] = {
         { "PreviewClassOutfit", PreviewClassOutfit }, { "ClearClassPreview", ClearClassPreview },
         { "Dress", Dress }, { "Undress", Undress },
         { "GetCameraPosition", GetCameraPosition }, { "SetCameraPosition", SetCameraPosition },
         { "ResetCameraPosition", ResetCameraPosition }, { "ZoomIn", ZoomIn }, { "ZoomOut", ZoomOut },
+        { "SetSelectedArchetype", SetSelectedArchetype }, { "CycleCustomizationSkipLocked", CycleCustomization },
         { nullptr, nullptr }
     };
     luaL_register(L, nullptr, functions);
@@ -188,6 +236,7 @@ void AscensionCharacterCreation_Reset() {
     s_undressed = false;
     s_cameraOverride = false;
     s_zooming = false;
+    s_role = s_category = s_archetype = 0;
 }
 
 bool AscensionCharacterCreation_Dress() {
@@ -200,17 +249,21 @@ bool AscensionCharacterCreation_Dress() {
         return true;
     }
     const auto& preferences = character->m_data.m_preferences;
-    for (uint32_t row = 0; s_previewClass && row < s_classDetails.Count(); ++row) {
-        if (s_classDetails.Value(row, 1) != s_previewClass
-            || s_classDetails.Value(row, 2) != preferences.m_raceID
-            || s_classDetails.Value(row, 3) != preferences.m_sexID) {
+    const auto& table = s_previewClass ? s_classDetails : s_archetype ? s_archetypeDetails : s_category ? s_categories : s_roles;
+    uint32_t selected = s_previewClass ? s_previewClass : s_archetype ? s_archetype : s_category ? s_category : s_role;
+    uint32_t firstItem = s_previewClass || s_archetype ? 16 : s_category ? 7 : 6;
+    for (uint32_t row = 0; selected && row < table.Count(); ++row) {
+        bool detailed = s_previewClass || s_archetype;
+        if ((detailed && (table.Value(row, 1) != selected
+            || table.Value(row, 2) != preferences.m_raceID || table.Value(row, 3) != preferences.m_sexID))
+            || (!detailed && table.Value(row, 0) != selected)) {
             continue;
         }
         // ClassDetails stores twelve Item.dbc IDs, not display IDs or inventory slots.
         RemoveEquipment(character);
         bool mainHand = false;
-        for (uint32_t column = 16; column < 28; ++column) {
-            const auto* item = g_itemDB.GetRecord(s_classDetails.Value(row, column));
+        for (uint32_t column = firstItem; column < firstItem + 12; ++column) {
+            const auto* item = g_itemDB.GetRecord(table.Value(row, column));
             if (!item || item->m_displayInfoID <= 0) {
                 continue;
             }
@@ -221,7 +274,7 @@ bool AscensionCharacterCreation_Dress() {
             bool ranged = type == INVTYPE_RANGED || type == INVTYPE_RANGEDRIGHT || type == INVTYPE_THROWN;
             bool weapon = type == INVTYPE_WEAPON || type == INVTYPE_2HWEAPON
                 || type == INVTYPE_WEAPONMAINHAND || type == INVTYPE_WEAPONOFFHAND || ranged;
-            bool sheathed = weapon && s_classDetails.Value(row, 15) != 0;
+            bool sheathed = weapon && table.Value(row, firstItem - 1) != 0;
             if (ranged || sheathed) {
                 ItemDisplayInfoRec display;
                 if (g_itemDisplayInfoDB.GetRecord(item->m_displayInfoID, &display)) {

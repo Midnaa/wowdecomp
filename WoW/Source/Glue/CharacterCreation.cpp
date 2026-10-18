@@ -1,5 +1,6 @@
 #include "CharacterCreation.h"
 #include "AscensionCharacterCreation.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include <cstring>
 #include <vector>
 #include "Engine/Source/Event/Event.h"
@@ -405,7 +406,7 @@ int32_t CCharacterCreation::GetRandomClassID() {
     for (uint32_t i = 0; i < CCharacterCreation::m_classes.Count(); i++) {
         ChrClassesRec* rec = CCharacterCreation::m_classes.m_data[i];
 
-        if (rec && expansion >= rec->m_requiredExpansion) {
+        if (rec && expansion >= rec->m_requiredExpansion && AscensionUI_IsClassAllowed(rec->m_id)) {
             classes.push_back(rec->m_id);
         }
     }
@@ -671,7 +672,8 @@ void CCharacterCreation::SetSelectedSex(uint32_t sexID) {
 // VERIFY: 60798dcb auto
 // OFFSET: 0x004E1740
 void CCharacterCreation::SetSelectedClass(int32_t classID) {
-    if (!CCharacterCreation::IsClassAvailable(classID)) {
+    if (!CCharacterCreation::IsClassAvailable(classID)
+        || (CCharacterCreation::m_existingCharacterIndex < 0 && !AscensionUI_IsClassAllowed(classID))) {
         return;
     }
 

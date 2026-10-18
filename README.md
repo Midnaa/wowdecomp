@@ -120,6 +120,9 @@ Implemented so far:
 - Realm flags and class eligibility from the server's `0x09BC` message, and the
   addon list from `0x094E`. These layouts match the local CoA server compatibility
   implementation; they are not a general guarantee for other server versions.
+  `CoA.ClassModel=coa` exposes IDs 12–32, `wcr` exposes the nine classic classes,
+  and `hero` exposes only ID 10. Native randomization, selection, and creation
+  also honor these flags; the archived UI chooses the corresponding layout.
 - Saved custom CVars, settings files under `WTF/Custom`, frame attribute
   enumeration, and Lua error diagnostics in `Logs/AscensionUI.log`.
 - Character-selection addon preferences, keyboard state, class-name lookup,
@@ -136,18 +139,34 @@ Implemented so far:
   selected by class, race, and sex, including weapon placement. Native dress,
   undress, camera position/reset, and zoom APIs support the original creation
   script without replacing its layout or class buttons.
+- `GetSpellData` and `GetSpellDescription` read the effective spell records,
+  format descriptions with the core spell parser, and resolve original spell
+  icons. These APIs are available in GlueXML before entering the world, including
+  the race-passive tooltips that previously stopped creation-screen setup.
+- Archetype descriptions, primary spells, weapon/armor lists, artwork, and video
+  paths from the original DBC records; role/category/archetype selection and
+  equipment previews. The customization arrows use the core appearance cycle.
+- Server-backed active/inactive character lists (`0x075E`), activate/deactivate
+  requests (`0x072E`/`0x072F`) and result events (`0x075F`/`0x0760`). Malformed
+  responses preserve the last valid list. Configuration getters consume the
+  server's `0x058D` settings; absent settings return nil.
+- Error-tooltip spacing and UTF-8 clipboard export for the original error UI.
 
 This is incomplete. Class-preview spell effects, custom animations/transforms,
-archetype selection/details, and many in-game talent/collection APIs still need
-implementation. Conditional class roles requiring learned spells are not yet
-evaluated. Loading the scripts does not establish visual or functional
+premium customization-unlock rules, and many in-game talent/collection APIs still
+need implementation. Conditional class roles requiring learned spells and
+Ascension-specific spell-description expressions are not yet evaluated. Loading
+the scripts does not establish visual or functional
 parity with `Ascension.exe`. Graphics options `useUiScale`, `lodObjectCull`, and
 `useRaidVideoSettings` also currently report missing CVars. Settings persistence
 accepts simple names only; the archive/content update system is not supported.
-Realm migration and the extended active/inactive character-list APIs are also
-not implemented; the UI uses the standard character list where supported.
+The local CoA server does not implement realm migration, so the merge API reports
+it unavailable. Archetype availability remains controlled by the archived UI's
+realm-name check and the server's `CONFIG_CHARACTER_CREATION_ARCHETYPES_ENABLED`
+setting. Build and parser checks do not substitute for rendered UI/game testing.
 
-The standalone parser checks use synthetic data; an optional local
+The standalone parser checks cover all three class modes, character lists,
+server settings, addons, and truncated packets using synthetic data; an optional local
 `ChrSpecs.dbc` can be passed to the executable without adding it to the repository:
 
 ```powershell

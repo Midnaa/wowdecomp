@@ -1,6 +1,7 @@
 #include "WoW/Source/UIUtil/AscensionDBC.h"
 #include "WoW/Source/UIUtil/AscensionRealm.h"
 #include "WoW/Source/UIUtil/AscensionAddons.h"
+#include "WoW/Source/UIUtil/AscensionProtocol.h"
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -16,8 +17,65 @@ static void Put32(std::vector<uint8_t>& bytes, size_t offset, uint32_t value) {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
 
+template<class T> static void Append(std::vector<uint8_t>& bytes, T value) {
+    size_t offset = bytes.size();
+    bytes.resize(offset + sizeof(value));
+    std::memcpy(bytes.data() + offset, &value, sizeof(value));
+}
+static void Text(std::vector<uint8_t>& bytes, const char* value) {
+    bytes.insert(bytes.end(), value, value + std::strlen(value) + 1);
+}
+static void Key(std::vector<uint8_t>& bytes, const char* value) {
+    Append(bytes, uint32_t(std::strlen(value)));
+    bytes.insert(bytes.end(), value, value + std::strlen(value));
+}
+
+static void CheckExtendedPackets() {
+    AscensionCharacterList characters;
+    std::vector<uint8_t> list;
+    for (uint32_t count : { 128u, 2u, 1u, 1u }) { Append(list, count); }
+    for (uint8_t active : { uint8_t(1), uint8_t(0) }) {
+        Append(list, uint32_t(100 + active));
+        for (uint8_t field : { active, uint8_t(0), uint8_t(60), uint8_t(1), uint8_t(32), uint8_t(0) }) { Append(list, field); }
+        Append(list, uint32_t(12));
+        Text(list, active ? "Active Ranger" : "Inactive Ranger");
+    }
+    Require(characters.Read(list.data(), list.size()), "Server character list rejected");
+    Require(characters.maximum == 128 && characters.entries.size() == 2
+        && characters.entries[0].classID == 32 && characters.entries[1].active == 0,
+        "Character class or active state lost");
+    for (size_t i = 0; i < list.size(); ++i) {
+        Require(!characters.Read(list.data(), i), "Truncated character list accepted");
+    }
+    Require(characters.entries.size() == 2, "Invalid character list replaced previous state");
+    Put32(list, 8, 2);
+    Require(!characters.Read(list.data(), list.size()), "Inconsistent character counts accepted");
+    Put32(list, 8, 1);
+    list.push_back(0);
+    Require(!characters.Read(list.data(), list.size()), "Trailing character bytes accepted");
+
+    AscensionConfig config;
+    std::vector<uint8_t> settings;
+    Append(settings, uint32_t(1)); Key(settings, "CONFIG_MAX_LEVEL"); Append(settings, int32_t(60));
+    Append(settings, uint32_t(1)); Key(settings, "CONFIG_CHARACTER_CREATION_ARCHETYPES_ENABLED"); Append(settings, uint8_t(1));
+    Append(settings, uint32_t(1)); Key(settings, "FLOAT_CONFIG"); Append(settings, 2.5f);
+    Append(settings, uint32_t(1)); Key(settings, "RATE_XP_GLOBAL"); Append(settings, 3.0f);
+    Append(settings, uint32_t(0)); Append(settings, uint32_t(0));
+    Require(config.Read(settings.data(), settings.size()), "Server configuration rejected");
+    Require(config.integers.at("CONFIG_MAX_LEVEL") == 60
+        && config.booleans.at("CONFIG_CHARACTER_CREATION_ARCHETYPES_ENABLED") == 1
+        && config.rates.at("RATE_XP_GLOBAL") == 3.0f, "Configuration sections mixed up");
+    for (size_t i = 0; i < settings.size(); ++i) {
+        Require(!config.Read(settings.data(), i), "Truncated configuration accepted");
+    }
+    Require(config.integers.at("CONFIG_MAX_LEVEL") == 60, "Invalid configuration replaced previous state");
+    Put32(settings, 0, UINT32_MAX);
+    Require(!config.Read(settings.data(), settings.size()), "Unbounded configuration count accepted");
+}
+
 int main(int argc, char** argv) {
     try {
+        CheckExtendedPackets();
         AscensionDBC table;
         Require(!table.Assign(nullptr, 0, 2), "Empty DBC accepted");
         std::vector<uint8_t> bytes(32);
@@ -68,6 +126,19 @@ int main(int argc, char** argv) {
         Require(realm.Read(packet.data(), packet.size()), "WCR realm rejected");
         Require(realm.CanCreateClass(1) && realm.CanCreateClass(11), "WCR classes excluded");
         Require(!realm.CanCreateClass(6) && !realm.CanCreateClass(12), "WCR class restriction lost");
+        auto classCount = [&]() {
+            uint32_t count = 0;
+            for (uint32_t id = 1; id <= 32; ++id) { count += realm.CanCreateClass(id); }
+            return count;
+        };
+        Require(classCount() == 9, "WCR must expose nine classes");
+        packet[43] = 0;
+        Require(realm.Read(packet.data(), packet.size()), "Hero realm rejected");
+        Require(classCount() == 1 && realm.CanCreateClass(10), "Hero must expose only Hero");
+        packet[42] = 1;
+        Require(realm.Read(packet.data(), packet.size()), "CoA realm rejected");
+        Require(classCount() == 21, "CoA must expose all twenty-one classes");
+        for (uint32_t id = 12; id <= 32; ++id) { Require(realm.CanCreateClass(id), "CoA class missing"); }
 
         AscensionAddons addons;
         const uint8_t addonPacket[] = { 2, 0, 0, 0, 'U', 'I', 0, 1, 'A', 'd', 'd', 'o', 'n', 0, 0 };

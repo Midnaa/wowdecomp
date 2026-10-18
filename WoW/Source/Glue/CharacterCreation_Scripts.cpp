@@ -1,4 +1,5 @@
 #include "CharacterCreation.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include <cstdint>
 #include <climits>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
@@ -214,7 +215,8 @@ static int32_t Script_GetAvailableClasses(lua_State* L) {
     for (int32_t i = 0; i < count; i++) {
         ChrClassesRec* classRec = i >= 0 && i < g_chrClassesDB.m_numRecords ? &g_chrClassesDB.m_records[i] : nullptr;
         const char* name = CGUnit_C::GetDisplayClassNameFromRecord(classRec, CCharacterCreation::m_character->m_data.m_preferences.m_sexID, nullptr);
-        bool available = ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion;
+        bool available = classRec && ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion
+            && AscensionUI_IsClassAllowed(classRec->m_id);
 
         if (name) {
             lua_pushstring(L, name);
@@ -342,11 +344,16 @@ static int32_t Script_SetCharacterCreateFacing(lua_State* L) {
 // VERIFY: 8699a7d2 auto
 // OFFSET: 0x004E0C60
 static int32_t Script_CreateCharacter(lua_State* L) {
-    if (lua_isstring(L, 1)) {
-        lua_tolstring(L, 1, nullptr);
+    const char* name = luaL_checkstring(L, 1);
+    if (!CCharacterCreation::m_character) {
+        return luaL_error(L, "Character creation is not initialized");
+    }
+    if (CCharacterCreation::m_existingCharacterIndex < 0
+        && !AscensionUI_IsClassAllowed(CCharacterCreation::m_selectedClassID)) {
+        return luaL_error(L, "The selected class is not available on this realm");
     }
 
-    CCharacterCreation::CreateCharacter(lua_tolstring(L, 1, nullptr));
+    CCharacterCreation::CreateCharacter(name);
     return 0;
 }
 
@@ -467,7 +474,8 @@ static int32_t Script_GetClassesForRace(lua_State* L) {
     for (uint32_t i = 0; i < count; i++) {
         ChrClassesRec* classRec = i < CCharacterCreation::m_classes.Count() ? CCharacterCreation::m_classes.m_data[i] : nullptr;
         const char* name = CGUnit_C::GetDisplayClassNameFromRecord(classRec, CCharacterCreation::m_character->m_data.m_preferences.m_sexID, nullptr);
-        bool available = classRec && ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion;
+        bool available = classRec && ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion
+            && AscensionUI_IsClassAllowed(classRec->m_id);
 
         if (name) {
             lua_pushstring(L, name);
