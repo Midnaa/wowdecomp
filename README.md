@@ -82,6 +82,13 @@ logger off in `WowClient` with `-DWOWCLIENT_CRASH_LOG=OFF`.
 | `WOWCLIENT_CRASH_LOG` | `ON` | Build `WowClient` with the crash logger |
 | `WOWCLIENT_OUTPUT_OVERRIDE` | empty | Name the `WowClient` executable something other than `WowClient64` / `WowClient32` |
 
+For modified game data or custom login UI, configure with
+`-DWOWDECOMP_DISABLE_SIGNATURE_CHECKS=ON` and rebuild. This also preserves loose
+`Interface/GlueXML`, `Interface/FrameXML`, and Blizzard addon overrides at startup.
+Custom client APIs and data formats may still require additional implementation.
+Keep local game installations in `client/`; this directory and MPQ archives are
+ignored by Git and must not be committed.
+
 ## Running
 
 1. Copy the `Data` folder of your 3.3.5a client into `bin/Win/`, so you have `bin/Win/Data/`.

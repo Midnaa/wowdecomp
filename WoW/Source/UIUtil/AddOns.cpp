@@ -149,6 +149,10 @@ static int32_t DeleteInterfaceAddOns(OS_FILE_DATA& data, void* param) {
 // VERIFY: 012df8c8 auto
 // OFFSET: 0x005F4D90
 void DeleteInterfaceFiles() {
+#ifdef DISABLE_SIGNATURE_CHECKS
+    // Modified clients may intentionally provide loose UI files over the archives.
+    return;
+#endif
     bool deleted = false;
     const char* directories[] = { "Interface\\GlueXML", "Interface\\FrameXML" };
 

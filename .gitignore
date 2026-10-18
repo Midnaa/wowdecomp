@@ -410,3 +410,11 @@ FodyWeavers.xsd
 
 # Local Visual Studio CMake settings (absolute paths to re/tools)
 CMakeSettings.json
+
+# Local game installation, assets, settings, and caches (never source).
+/client/
+/[Dd]ata/
+/Interface/
+/WTF/
+/Cache/
+*.[mM][pP][qQ]
