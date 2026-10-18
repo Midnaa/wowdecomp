@@ -3,6 +3,10 @@
 #include "AscensionDBC.h"
 #include "AscensionSpellCharges.h"
 #include "AscensionJSON.h"
+#include "AscensionLibraryName.h"
+#include "AscensionProgressUI.h"
+#include "AscensionTutorialUI.h"
+#include "AscensionWorldState.h"
 #include <algorithm>
 #include <cctype>
 #include <set>
@@ -41,13 +45,57 @@ std::set<std::string> s_libraries;
 AscensionAuraAmounts s_auraAmounts;
 AscensionDBC s_chargeLinks, s_chargeCategories;
 AscensionSpellCharges s_charges;
+AscensionWorldState s_world;
+AscensionDBC s_challengeRules, s_ruleTypes, s_spellRanks;
 
-bool LibraryName(const char* name, size_t length) {
-    if (!length || length > 120) { return false; }
-    for (size_t i = 0; i < length; ++i) {
-        if (!std::isalnum(static_cast<unsigned char>(name[i])) && name[i] != '-' && name[i] != '_' && name[i] != '.') { return false; }
+int GetCustomGameMode(lua_State* L) { lua_pushnumber(L, s_world.modes); return 1; }
+int ArenaRewards(lua_State* L) {
+    const char* brackets[] = { "BRACKET_NONE", "BRACKET_COMBATANT", "BRACKET_CHALLENGER", "BRACKET_RIVAL", "BRACKET_DUELIST", "BRACKET_GLADIATOR" };
+    lua_pushnumber(L, s_world.arena[1]); lua_pushnumber(L, s_world.arena[0]);
+    lua_pushstring(L, brackets[s_world.arena[2]]);
+    for (int i = 3; i < 7; ++i) { lua_pushnumber(L, s_world.arena[i]); }
+    return 7;
+}
+int SendEmptyRequest(lua_State* L) {
+    if (!ClientServices::Connection()->m_authenticated || CGlueMgr::s_scriptFunctionsLoaded) { return 0; }
+    CDataStore packet;
+    packet.Put(static_cast<uint32_t>(lua_tointeger(L, lua_upvalueindex(1))));
+    packet.Finalize(); ClientServices::Send2(&packet); return 0;
+}
+int HasChallengeRule(lua_State* L) {
+    const char* token = luaL_checkstring(L, 1);
+    bool has = false;
+    for (uint32_t row = 0; row < s_challengeRules.Count() && !has; ++row) {
+        auto active = s_world.challenges.find(s_challengeRules.Value(row, 2));
+        if (active == s_world.challenges.end() || active->second != s_challengeRules.Value(row, 3)) { continue; }
+        uint32_t type = s_challengeRules.Value(row, 4);
+        for (uint32_t rule = 0; rule < s_ruleTypes.Count(); ++rule) {
+            if (s_ruleTypes.Value(rule, 0) == type && !std::strcmp(s_ruleTypes.String(rule, 1), token)) { has = true; break; }
+        }
     }
-    return std::strstr(name, "..") == nullptr;
+    lua_pushboolean(L, has); return 1;
+}
+int IsInManastorm(lua_State* L) { lua_pushboolean(L, s_world.depth != 0); return 1; }
+int GetManastormDepth(lua_State* L) { lua_pushnumber(L, s_world.depth); return 1; }
+int GetMaxLearnableRank(lua_State* L) {
+    int firstArg = lua_istable(L, 1) ? 2 : 1;
+    uint32_t spellID = static_cast<uint32_t>(luaL_checkinteger(L, firstArg));
+    auto* player = ClntObjMgrGetActivePlayerObj();
+    uint32_t level = static_cast<uint32_t>(luaL_optinteger(L, firstArg + 1, player ? player->m_unit->m_unitFieldLevel : 1));
+    uint32_t root = spellID, best = 0, bestRank = 0;
+    for (uint32_t row = 0; row < s_spellRanks.Count(); ++row) {
+        if (s_spellRanks.Value(row, 0) == spellID) { root = s_spellRanks.Value(row, 1); break; }
+    }
+    SpellRec spell;
+    if (g_spellDB.GetRecord(spellID, &spell) && spell.m_spellLevel <= level) { best = spellID; }
+    for (uint32_t row = 0; row < s_spellRanks.Count(); ++row) {
+        uint32_t id = s_spellRanks.Value(row, 0), rank = s_spellRanks.Value(row, 2);
+        if (s_spellRanks.Value(row, 1) == root && rank > bestRank && g_spellDB.GetRecord(id, &spell) && spell.m_spellLevel <= level) {
+            bestRank = rank; best = id;
+        }
+    }
+    if (best) { lua_pushnumber(L, best); return 1; }
+    return 0;
 }
 
 int IsLibraryLoaded(lua_State* L) {
@@ -59,7 +107,13 @@ int IsLibraryLoaded(lua_State* L) {
 int LoadLibrary(lua_State* L) {
     size_t length;
     const char* name = luaL_checklstring(L, 1, &length);
-    if (!LibraryName(name, length)) { return luaL_error(L, "Invalid UI library name"); }
+    // ErrorHandler probes LibStub with arbitrary stack/local descriptions.
+    // An unsupported library is a normal miss, including a name that cannot
+    // safely form an archive path. LibStub handles required/optional misses.
+    if (!AscensionLibraryName(std::string_view(name, length))) {
+        lua_pushboolean(L, false);
+        return 1;
+    }
     bool loaded = s_libraries.count(name) != 0;
     if (!loaded) {
         std::string path = "Interface\\LibraryXML\\" + std::string(name) + ".toc";
@@ -101,6 +155,21 @@ int UnitIsLevelScaling(lua_State* L) {
     auto* unit = GetUnitFromName(luaL_checkstring(L, 1));
     if (!unit) { lua_pushnil(L); }
     else { lua_pushboolean(L, (unit->m_unit->m_unitDynamicFlags & 0x100) != 0); }
+    return 1;
+}
+
+int GetUnitPrimaryStat(lua_State* L) {
+    auto* unit = GetUnitFromName(luaL_checkstring(L, 1));
+    if (unit) {
+        const uint32_t spells[] = { 954687, 954688, 954689, 954690, 0, 954699 };
+        for (uint32_t i = 0; i < 6; ++i) {
+            if (spells[i] && unit->GetAuraIndex(spells[i]) >= 0) {
+                lua_pushinteger(L, i + 1);
+                return 1;
+            }
+        }
+    }
+    lua_pushnil(L);
     return 1;
 }
 
@@ -313,10 +382,22 @@ void AscensionGameUI_Register() {
     s_libraries.clear();
     LoadTable(s_chargeLinks, "DBFilesClient\\SpellCharges.dbc", 2);
     LoadTable(s_chargeCategories, "DBFilesClient\\SpellChargesCategory.dbc", 3);
+    LoadTable(s_challengeRules, "DBFilesClient\\ChallengeRules.dbc", 5);
+    LoadTable(s_spellRanks, "DBFilesClient\\SpellRank.dbc", 3);
+    {
+        void* bytes = nullptr;
+        uint32_t size = 0;
+        s_ruleTypes = {};
+        if (SFile::ReadFile(nullptr, "DBFilesClient\\ChallengeRuleTypes.dbc", &bytes, &size, 0, 1, nullptr)) {
+            s_ruleTypes.AssignFormatted(bytes, size, "ddLL"); SFile::Unload(bytes);
+        }
+    }
     const luaL_Reg functions[] = {
         { "IsLibraryLoaded", IsLibraryLoaded }, { "LoadLibrary", LoadLibrary },
         { "CanPerformAction", CanPerformAction }, { "UnitCastingSpellID", UnitCastingSpellID },
         { "UnitIsLevelScaling", UnitIsLevelScaling }, { "UnitGroupRolesAssignedKey", UnitGroupRolesAssignedKey },
+        { "GetUnitPrimaryStat", GetUnitPrimaryStat },
+        { "GetCustomGameMode", GetCustomGameMode }, { "Ascension_GetArenaRewardInfo", ArenaRewards },
         { "RegisterInterfaceEvent", RegisterInterfaceEvent }, { "SignalEvent", SignalEvent },
         { "SetCameraFoV", SetCameraFoV }, { "GetItemQuality", GetItemQuality },
         { "SetNamePlateCastBarMode", SetNamePlateCastBarMode },
@@ -336,9 +417,26 @@ void AscensionGameUI_Register() {
         lua_pushcclosure(L, InviteRequest, 1);
         lua_setglobal(L, entry.first);
     }
-    const luaL_Reg spells[] = { { "IsHelpfulSpell", IsHelpfulSpell }, { "HasRuneUI", HasRuneUI }, { nullptr, nullptr } };
+    for (const auto& entry : { std::make_pair("Ascension_QueryArenaRewardInfo", 0x053E), std::make_pair("_AscensionQueryInstanceBinds", 0x06FD) }) {
+        lua_pushinteger(L, entry.second); lua_pushcclosure(L, SendEmptyRequest, 1); lua_setglobal(L, entry.first);
+    }
+    const luaL_Reg challenge[] = { { "HasChallengeRule", HasChallengeRule }, { nullptr, nullptr } };
+    luaL_register(L, "C_Challenge", challenge); lua_pop(L, 1);
+    const luaL_Reg manastorm[] = { { "IsInManastorm", IsInManastorm }, { "GetCurrentDepth", GetManastormDepth }, { nullptr, nullptr } };
+    luaL_register(L, "C_Manastorm", manastorm); lua_pop(L, 1);
+    const luaL_Reg spells[] = { { "IsHelpfulSpell", IsHelpfulSpell }, { "HasRuneUI", HasRuneUI }, { "GetMaxLearnableRank", GetMaxLearnableRank }, { nullptr, nullptr } };
     luaL_register(L, "C_Spell", spells);
     lua_pop(L, 1);
+    AscensionProgressUI_Register();
+    AscensionTutorialUI_Register();
+    FrameScript_Execute(R"lua(
+C_LootLockout = C_LootLockout or {}
+C_LootLockout.QueryInstanceBinds = _AscensionQueryInstanceBinds
+function C_Manastorm.CanEnter()
+    if not C_Config.GetBoolConfig("CONFIG_MANASTORM_ENABLED") then return false, "MANASTORM_NOT_AVAILABLE" end
+    return UnitLevel("player") >= 10 and not InCombatLockdown(), "MANASTORM_REQUIRED_LEVEL"
+end
+)lua", "Ascension group finder compatibility", nullptr);
     if (!CVar::Lookup("useUiScale")) {
         CVar::Register("useUiScale", "Whether the in-game UI uses its configured scale", 1, "0", nullptr, CATEGORY_DEFAULT, false, nullptr, false);
     }
@@ -355,11 +453,24 @@ void AscensionGameUI_Register() {
 }
 
 void AscensionGameUI_ResetRealm() {
+    AscensionTutorialUI_Reset();
+    s_world = {};
+    AscensionProgressUI_Reset();
     s_auraAmounts.units.clear();
     s_charges.entries.clear();
 }
 
 bool AscensionGameUI_ProcessMessage(uint16_t opcode, const void* data, size_t size) {
+    if (AscensionProgressUI_ProcessMessage(opcode, data, size)) { return true; }
+    if (AscensionTutorialUI_ProcessMessage(opcode, data, size)) { return true; }
+    if (opcode == 0x090B || opcode == 0x0925 || opcode == 0x0596 || opcode == 0x0660) {
+        bool valid = opcode == 0x090B ? s_world.ReadModes(data, size) : opcode == 0x0925 ? s_world.ReadArena(data, size)
+            : opcode == 0x0596 ? s_world.ReadChallenges(data, size) : s_world.ReadManastorm(data, size);
+        const char* event = opcode == 0x090B ? "ASCENSION_CUSTOM_GAME_MODE_CHANGED" : opcode == 0x0925 ? "ASCENSION_CUSTOM_PVP_REWARD_INFO_AVAILABLE"
+            : opcode == 0x0596 ? "CHALLENGE_ACTIVE_LIST_CHANGED" : "ACTIVE_MANASTORM_UPDATED";
+        if (valid && !CGlueMgr::s_scriptFunctionsLoaded) { FrameScript_SignalEvent(FrameScript_RegisterInterfaceEvent(event), nullptr); }
+        return true;
+    }
     if (opcode == 0x0673) {
         uint64_t target;
         if (s_auraAmounts.Read(data, size, target) && !CGlueMgr::s_scriptFunctionsLoaded) {

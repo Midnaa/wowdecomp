@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <cstring>
 #include "ClientServices.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/ConsoleBase/ConsoleCommand.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
@@ -1630,6 +1631,7 @@ void ClientServices::LoginEnterToken(const char* token) {
 // VERIFY: e448981b manual
 // OFFSET: 0x006B08B0
 void ClientConnection::HandleLogoutResponse(int32_t result, int32_t instant) {
+    AscensionUI_LogLogoutResponse(result, instant);
     if (result) {
         CGGameUI::DisplayError(ERR_LOGOUT_FAILED);
         this->m_loggingOut = 0;

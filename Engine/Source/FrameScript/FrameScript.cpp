@@ -5,6 +5,7 @@
 #include <string>
 #include <malloc.h>
 #include "Engine/Source/FrameScript/FrameScript.h"
+#include "Engine/Source/FrameScript/ErrorHandler.h"
 #include "Engine/Source/FrameScript/FrameScript_Object.h"
 #include "Engine/Source/Base/Status.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
@@ -1129,12 +1130,12 @@ static int32_t FrameScript_HandleError(lua_State* L) {
         lua_replace(L, -2);
     }
 
-    if (s_errorHandlerFunc != -1) {
-        s_inErrorHandler = 1;
-        lua_rawgeti(L, LUA_REGISTRYINDEX, s_errorHandlerFunc);
-        lua_insert(L, -2);
-        lua_call(L, 1, 1);
-        s_inErrorHandler = 0;
+    if (FrameScript_CallErrorHandler(L, s_errorHandlerFunc, s_inErrorHandler)) {
+        if (s_errorObserver) {
+            const char* secondary = lua_tostring(L, -1);
+            s_errorObserver(secondary ? secondary : "UI error handler failed with a non-string error");
+        }
+        lua_pop(L, 1);
     }
 
     return 1;

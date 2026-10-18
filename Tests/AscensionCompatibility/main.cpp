@@ -5,6 +5,10 @@
 #include "WoW/Source/UIUtil/AscensionAuraAmounts.h"
 #include "WoW/Source/UIUtil/AscensionSpellCharges.h"
 #include "WoW/Source/UIUtil/AscensionJSON.h"
+#include "WoW/Source/UIUtil/AscensionLibraryName.h"
+#include "WoW/Source/UIUtil/AscensionAdvancementState.h"
+#include "WoW/Source/UIUtil/AscensionTutorialState.h"
+#include "WoW/Source/UIUtil/AscensionWorldState.h"
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -34,6 +38,61 @@ static void Key(std::vector<uint8_t>& bytes, const char* value) {
 }
 
 static void CheckGameUIData() {
+    // Packed bytes followed by aligned floats/DWORDs and a localized field.
+    std::vector<uint8_t> packed(20 + 77 + 4, 0);
+    std::memcpy(packed.data(), "WDBC", 4);
+    Put32(packed, 4, 1); Put32(packed, 8, 20); Put32(packed, 12, 77); Put32(packed, 16, 4);
+    packed[20] = 7; Put32(packed, 21, 0x3f800000); Put32(packed, 25, 1);
+    Put32(packed, 93, 42); std::memcpy(packed.data()+97, "\0Hi", 4);
+    AscensionDBC decoded;
+    Require(decoded.AssignFormatted(packed.data(), packed.size(), "bdLd"), "Packed localized table rejected");
+    Require(decoded.Value(0, 0) == 7 && decoded.Value(0, 1) == 0x3f800000 && decoded.Value(0, 3) == 42,
+        "Byte fields or localized strings shifted the native layout");
+    Require(!std::strcmp(decoded.String(0, 2), "Hi"), "Localized field not decoded");
+    Require(!decoded.AssignFormatted(packed.data(), packed.size()-1, "bdLd"), "Truncated packed table accepted");
+
+    AscensionAdvancementState advancement;
+    std::vector<uint8_t> known;
+    Append(known, uint32_t(1)); Append(known, uint32_t(4037)); Append(known, uint32_t(1));
+    Append(known, uint32_t(1)); Append(known, uint8_t(1)); Append(known, uint32_t(12)); Append(known, uint32_t(0));
+    Require(advancement.ReadKnown(known.data(), known.size()) && advancement.known.at(4037).locked, "Known talent state rejected");
+    for (size_t i = 0; i < known.size(); ++i) {
+        Require(!advancement.ReadKnown(known.data(), i) && advancement.known.at(4037).rank == 1, "Truncated talent state replaced known ranks");
+    }
+    std::vector<uint8_t> spec;
+    Append(spec, uint32_t(2)); Append(spec, uint32_t(3));
+    Require(advancement.ReadSpec(spec.data(), spec.size()) && advancement.active == 2, "Third specialization rejected");
+    Put32(spec, 0, 3);
+    Require(!advancement.ReadSpec(spec.data(), spec.size()) && advancement.active == 2, "Invalid active specialization accepted");
+
+    AscensionTutorialState tutorials;
+    std::vector<uint8_t> claims;
+    Append(claims, uint32_t(2)); Append(claims, uint32_t(120)); Append(claims, uint32_t(76));
+    Require(tutorials.ReadRewards(claims.data(), claims.size(), false) && tutorials.rewarded.count(76), "Claim history rejected");
+    Require(!tutorials.ReadRewards(claims.data(), claims.size()-1, false) && tutorials.rewarded.size() == 2, "Partial claim history replaced state");
+    std::vector<uint8_t> patch(45*4, 0);
+    Put32(patch, 0, 120); Put32(patch, 33*4, 3);
+    for (const char* text : { "icon", "auxiliary", "Welcome", "Original tutorial pages", "hint" }) { Text(patch, text); }
+    Require(tutorials.ReadPatch(patch.data(), patch.size()) && tutorials.patches.at(120).strings[3] == "Original tutorial pages", "Tutorial patch text lost");
+    Require(!tutorials.ReadPatch(patch.data(), patch.size()-1) && tutorials.patches.at(120).fields[33] == 3, "Malformed tutorial patch replaced state");
+
+    AscensionWorldState world;
+    std::vector<uint8_t> arena;
+    for (uint32_t value : { 5000u, 125u, 2u, 0u, 0u, 30u, 20u }) { Append(arena, value); }
+    Require(world.ReadArena(arena.data(), arena.size()) && world.arena[1] == 125, "Arena rewards rejected");
+    Put32(arena, 8, 6);
+    Require(!world.ReadArena(arena.data(), arena.size()) && world.arena[2] == 2, "Invalid arena bracket accepted");
+    std::vector<uint8_t> active;
+    Append(active, uint32_t(1));
+    for (uint32_t value : { 0u, 188u, 1u, 1u, 0u, 0u }) { Append(active, value); }
+    Append(active, uint16_t(0));
+    Require(world.ReadChallenges(active.data(), active.size()) && world.challenges.at(188) == 1, "Challenge restrictions rejected");
+    Require(!world.ReadChallenges(active.data(), active.size()-1) && world.challenges.count(188), "Truncated challenge packet removed restrictions");
+    Require(AscensionLibraryName("AceAddon-3.0") && AscensionLibraryName("LibDataBroker-1.1"), "Archive library names rejected");
+    for (const char* name : { "", "table: 000001AF5E04E340", "Frame Name", "..", "../outside", "folder\\library" }) {
+        Require(!AscensionLibraryName(name), "Unsafe library probe accepted as an archive path");
+    }
+    Require(!AscensionLibraryName(std::string_view("Ace\0Addon", 9)), "Embedded NUL accepted in library path");
     AscensionAuraAmounts amounts;
     std::vector<uint8_t> aura;
     Append(aura, uint64_t(123)); Append(aura, int32_t(7));

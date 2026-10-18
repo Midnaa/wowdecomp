@@ -903,9 +903,21 @@ bool AscensionUI_IsClassAllowed(uint32_t classID) {
     return !s_enabled || !s_realm.received || s_realm.CanCreateClass(classID);
 }
 
+void AscensionUI_LogLogoutResponse(int32_t result, int32_t instant) {
+    if (!s_enabled) { return; }
+    char text[160];
+    std::snprintf(text, sizeof(text), "[logout] server result=%d instant=%d (timer requested only when both are zero)", result, instant);
+    LogLuaError(text);
+}
+
 void AscensionUI_RegisterInterfaceEvents() {
     if (!s_enabled) { return; }
-    for (const char* name : { "UNIT_HEAL_PREDICTION", "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED", "SPELL_UPDATE_CHARGES" }) {
+    for (const char* name : { "UNIT_HEAL_PREDICTION", "UNIT_ABSORB_AMOUNT_CHANGED", "UNIT_HEAL_ABSORB_AMOUNT_CHANGED", "SPELL_UPDATE_CHARGES",
+        "ASCENSION_CA_SPECIALIZATION_ACTIVE_ID_CHANGED", "CHARACTER_ADVANCEMENT_UPDATED", "CHARACTER_ADVANCEMENT_PENDING_BUILD_UPDATED",
+        "CHARACTER_ADVANCEMENT_UPDATE_ENTRIES_RESULT",
+        "CHARACTER_ADVANCEMENT_ENTRY_PATCHED", "TUTORIAL_CONTAINER_RESET", "TUTORIAL_ENTRY_UPDATE", "TUTORIAL_ENTRY_COMPLETE",
+        "CLAIM_TUTORIAL_REWARDS_RESULT", "MENTOR_WHOIS_DATA_CONTAINER_RESET", "QUERY_MENTOR_WHOIS_RESULT",
+        "ASCENSION_CUSTOM_GAME_MODE_CHANGED", "ASCENSION_CUSTOM_PVP_REWARD_INFO_AVAILABLE", "CHALLENGE_ACTIVE_LIST_CHANGED", "ACTIVE_MANASTORM_UPDATED" }) {
         FrameScript_RegisterInterfaceEvent(name);
     }
 }
@@ -938,7 +950,10 @@ bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
     if (!s_enabled || (opcode != 0x09BC && opcode != 0x094E
         && opcode != 0x076F && opcode != 0x0770 && opcode != 0x0771
         && opcode != 0x075E && opcode != 0x075F && opcode != 0x0760 && opcode != 0x058D
-        && opcode != 0x0673 && opcode != 0x09C2 && opcode != 0x09C4 && opcode != 0x09C5)) {
+        && opcode != 0x0673 && opcode != 0x09C2 && opcode != 0x09C4 && opcode != 0x09C5
+        && opcode != 0x0725 && opcode != 0x0726 && opcode != 0x072C
+        && opcode != 0x06A5 && opcode != 0x06AF && opcode != 0x06B0 && opcode != 0x06B1
+        && opcode != 0x090B && opcode != 0x0925 && opcode != 0x0596 && opcode != 0x0660)) {
         return false;
     }
     if (message->m_read <= message->m_size) {

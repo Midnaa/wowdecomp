@@ -10,5 +10,6 @@ bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message);
 bool AscensionUI_GetClassRoles(uint32_t classID, uint8_t& roles);
 bool AscensionUI_IsClassAllowed(uint32_t classID);
 void AscensionUI_RegisterInterfaceEvents();
+void AscensionUI_LogLogoutResponse(int32_t result, int32_t instant);
 
 #endif
