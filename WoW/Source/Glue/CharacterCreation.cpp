@@ -1,5 +1,7 @@
 #include "CharacterCreation.h"
+#include "AscensionCharacterCreation.h"
 #include <cstring>
+#include <vector>
 #include "Engine/Source/Event/Event.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/Model2/M2Model.h"
@@ -76,6 +78,7 @@ CNameGen CCharacterCreation::m_nameGen;
 // VERIFY: cbaddeb2 manual
 // OFFSET: 0x004E1C20
 void CCharacterCreation::Initialize() {
+    AscensionCharacterCreation_Reset();
     CCharacterCreation::m_charFacing = 0.0f;
     CCharacterCreation::m_charCustomizeFrame = nullptr;
     CCharacterCreation::m_existingCharacterIndex = -1;
@@ -155,6 +158,7 @@ void CCharacterCreation::GetRandomRaceAndSex(ComponentData* data) {
 // VERIFY: 45c27290 auto
 // OFFSET: 0x004DFFC0
 void CCharacterCreation::OnHide() {
+    AscensionCharacterCreation_Reset();
     EventUnregister(EVENT_ID_IDLE, &CCharacterCreation::Idle);
     LoadingScreenMiniDisable();
 }
@@ -394,28 +398,31 @@ int32_t CCharacterCreation::GetExistingClassIndex() {
 // VERIFY: 6c4329fd manual
 // OFFSET: 0x004E0F50
 int32_t CCharacterCreation::GetRandomClassID() {
-    int32_t classes[10];
-    int32_t count = 0;
+    std::vector<int32_t> classes;
+    classes.reserve(CCharacterCreation::m_classes.Count());
     uint8_t expansion = ClientServices::Connection()->m_accountExpansion;
 
     for (uint32_t i = 0; i < CCharacterCreation::m_classes.Count(); i++) {
         ChrClassesRec* rec = CCharacterCreation::m_classes.m_data[i];
 
-        if (expansion >= rec->m_requiredExpansion) {
-            classes[count++] = rec->m_id;
+        if (rec && expansion >= rec->m_requiredExpansion) {
+            classes.push_back(rec->m_id);
         }
     }
 
-    if (count <= 0) {
-        return classes[0];
+    if (classes.empty()) {
+        return 0;
     }
 
-    return classes[static_cast<uint32_t>((static_cast<uint64_t>(count) * CRandom::uint32_(g_rndSeed)) >> 32)];
+    return classes[static_cast<uint32_t>((static_cast<uint64_t>(classes.size()) * CRandom::uint32_(g_rndSeed)) >> 32)];
 }
 
 // VERIFY: b15e5451 auto
 // OFFSET: 0x004E0FD0
 void CCharacterCreation::Dress() {
+    if (AscensionCharacterCreation_Dress()) {
+        return;
+    }
     if (CCharacterCreation::m_existingCharacterIndex >= 0) {
         CharacterSelectionDisplay* display = CCharacterSelection::GetCharacterDisplay(CCharacterCreation::m_existingCharacterIndex);
 

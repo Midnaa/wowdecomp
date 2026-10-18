@@ -1,4 +1,5 @@
 #include <cstdint>
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include "Engine/Source/ConsoleBase/IConsole.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/FrameScript/FrameScript_Object.h"
@@ -4374,9 +4375,11 @@ static FrameScript_Method s_SystemFunctions[] = {
 // VERIFY: 5cf87403 auto
 // OFFSET: 0x0060A120
 void SystemRegisterFunctions() {
+    FrameScript_RegisterFunction("FillLocalizedClassList", Script_FillLocalizedClassList);
     for (uint32_t i = 0; i < sizeof(s_SystemFunctions) / sizeof(s_SystemFunctions[0]); i++) {
         FrameScript_RegisterFunction(s_SystemFunctions[i].m_name, s_SystemFunctions[i].m_method);
     }
+    AscensionUI_RegisterFunctions();
 }
 
 // VERIFY: 570706e7 auto

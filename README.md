@@ -89,6 +89,73 @@ Custom client APIs and data formats may still require additional implementation.
 Keep local game installations in `client/`; this directory and MPQ archives are
 ignored by Git and must not be committed.
 
+### Experimental Ascension UI compatibility
+
+The client includes an opt-in compatibility layer for the original Ascension UI
+scripts. Build with signature checks disabled, then add this line to the local
+installation's `WTF/Config.wtf`:
+
+```text
+SET ascensionUICompatibility "1"
+```
+
+Use the original UI from your local Ascension archives. Loose stock
+`Interface/GlueXML` and `Interface/FrameXML` overrides take priority over those
+archives and must be kept in a separate installation when comparing the two UIs.
+The compatibility layer reads the existing archives without modifying their
+models, textures, maps, or scripts. No game assets are distributed here.
+The original Ascension creation script already uses `MAX_CLASSES_PER_RACE = 32`
+and its own CoA class buttons. An error saying
+`Too many classes! Update MAX_CLASSES_PER_RACE` identifies the older stock
+WotLK override, which limits the UI to ten classes. Remove that override from
+the active installation instead of raising its limit: raising it retains the
+stock layout and does not restore Ascension's UI.
+
+Implemented so far:
+
+- Extended class lists without the original ten-class buffer limit, with enough
+  Lua stack space for CoA's 32 classes.
+- Class specialization descriptions, localized strings, archetype role/category
+  lists, and class guide data from the original DBC tables.
+- Realm flags and class eligibility from the server's `0x09BC` message, and the
+  addon list from `0x094E`. These layouts match the local CoA server compatibility
+  implementation; they are not a general guarantee for other server versions.
+- Saved custom CVars, settings files under `WTF/Custom`, frame attribute
+  enumeration, and Lua error diagnostics in `Logs/AscensionUI.log`.
+- Character-selection addon preferences, keyboard state, class-name lookup,
+  realm ID/session tracking, and server-provided character order, mail indicators,
+  and game-mode data (`0x076F`–`0x0771`). Sort changes use `0x0772`.
+  Repeated identical Lua errors are logged once per UI initialization so they
+  cannot hide later errors by exhausting the diagnostic limit.
+- `GetClassInfo(classID)` backed by the original class records, used by
+  Ascension's 21 CoA class buttons and role guide. Class names and icon keys come
+  from the archives instead of a stock class-name list.
+- Base class roles from `ChrClassesRoles.dbc`, avoiding the original eleven-class
+  array overrun. Class 32 no longer overflows the legacy race-restriction mask.
+- Class preview equipment from `CharacterCreationClassDetails.dbc` and `Item.dbc`,
+  selected by class, race, and sex, including weapon placement. Native dress,
+  undress, camera position/reset, and zoom APIs support the original creation
+  script without replacing its layout or class buttons.
+
+This is incomplete. Class-preview spell effects, custom animations/transforms,
+archetype selection/details, and many in-game talent/collection APIs still need
+implementation. Conditional class roles requiring learned spells are not yet
+evaluated. Loading the scripts does not establish visual or functional
+parity with `Ascension.exe`. Graphics options `useUiScale`, `lodObjectCull`, and
+`useRaidVideoSettings` also currently report missing CVars. Settings persistence
+accepts simple names only; the archive/content update system is not supported.
+Realm migration and the extended active/inactive character-list APIs are also
+not implemented; the UI uses the standard character list where supported.
+
+The standalone parser checks use synthetic data; an optional local
+`ChrSpecs.dbc` can be passed to the executable without adding it to the repository:
+
+```powershell
+cmake -S Tests/AscensionCompatibility -B build/ascension-tests -G "Visual Studio 17 2022" -A x64
+cmake --build build/ascension-tests --config Release
+ctest --test-dir build/ascension-tests -C Release --output-on-failure
+```
+
 ## Running
 
 1. Copy the `Data` folder of your 3.3.5a client into `bin/Win/`, so you have `bin/Win/Data/`.

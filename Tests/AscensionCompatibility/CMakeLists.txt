@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.10)
+project(AscensionCompatibilityTests LANGUAGES CXX)
+add_executable(AscensionCompatibilityTests main.cpp)
+target_compile_features(AscensionCompatibilityTests PRIVATE cxx_std_17)
+target_include_directories(AscensionCompatibilityTests PRIVATE ../..)
+enable_testing()
+add_test(NAME AscensionCompatibility COMMAND AscensionCompatibilityTests)

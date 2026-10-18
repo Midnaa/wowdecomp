@@ -1,4 +1,5 @@
 #include "NetClient.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -277,6 +278,10 @@ int32_t NetClient::ProcessMessage(uint32_t timeReceived, CDataStore* msg, int32_
     msg->Get(msgId);
     this->ValidateMessageId(msgId);
 
+    if (AscensionUI_ProcessMessage(msgId, msg)) {
+        return 1;
+    }
+
     if (msgId < NUM_MSG_TYPES && this->m_handlers[msgId]) {
         return this->m_handlers[msgId](this->m_handlerParams[msgId], static_cast<NETMESSAGE>(msgId), timeReceived, msg);
     }
@@ -349,6 +354,7 @@ void NetClient::PollEventQueue() {
 // VERIFY: 1eecebd5 auto
 // OFFSET: 0x006323C0
 int32_t NetClient::Connect(const char* address) {
+    AscensionUI_ResetRealm();
     if (this->m_netState != NS_INITIALIZED) {
         SErrDisplayAppFatal("Expected (m_netState == NS_INITIALIZED), got %d", this->m_netState);
     }

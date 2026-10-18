@@ -1,5 +1,6 @@
 #include "CharacterCreation.h"
 #include <cstdint>
+#include <climits>
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/Frame/CScriptObject.h"
 #include "Engine/Source/Frame/CSimpleModel.h"
@@ -50,56 +51,57 @@ static int32_t Script_IsRaceClassRestricted(lua_State* L) {
 
     int32_t raceID = static_cast<int32_t>(lua_tonumber(L, 1));
     int32_t classID = static_cast<int32_t>(lua_tonumber(L, 2));
+    uint32_t classMask = classID >= 0 && classID < 32 ? uint32_t(1) << classID : 0;
     bool restricted;
 
     switch (raceID) {
         case 1: {
-            restricted = (CCharacterSelection::s_raceRestrictions[0] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[0] & classMask) != 0;
             break;
         }
 
         case 2: {
-            restricted = (CCharacterSelection::s_raceRestrictions[5] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[5] & classMask) != 0;
             break;
         }
 
         case 3: {
-            restricted = (CCharacterSelection::s_raceRestrictions[1] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[1] & classMask) != 0;
             break;
         }
 
         case 4: {
-            restricted = (CCharacterSelection::s_raceRestrictions[3] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[3] & classMask) != 0;
             break;
         }
 
         case 5: {
-            restricted = (CCharacterSelection::s_raceRestrictions[8] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[8] & classMask) != 0;
             break;
         }
 
         case 6: {
-            restricted = (CCharacterSelection::s_raceRestrictions[7] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[7] & classMask) != 0;
             break;
         }
 
         case 7: {
-            restricted = (CCharacterSelection::s_raceRestrictions[2] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[2] & classMask) != 0;
             break;
         }
 
         case 8: {
-            restricted = (CCharacterSelection::s_raceRestrictions[6] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[6] & classMask) != 0;
             break;
         }
 
         case 10: {
-            restricted = (CCharacterSelection::s_raceRestrictions[9] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[9] & classMask) != 0;
             break;
         }
 
         case 11: {
-            restricted = (CCharacterSelection::s_raceRestrictions[4] & (1 << classID)) != 0;
+            restricted = (CCharacterSelection::s_raceRestrictions[4] & classMask) != 0;
             break;
         }
 
@@ -202,6 +204,12 @@ static int32_t Script_GetFactionForRace(lua_State* L) {
 // OFFSET: 0x004E0830
 static int32_t Script_GetAvailableClasses(lua_State* L) {
     int32_t count = g_chrClassesDB.m_numRecords;
+    if (count < 0 || count > INT_MAX / 3 || !lua_checkstack(L, count * 3)) {
+        return luaL_error(L, "Too many classes to return");
+    }
+    if (!CCharacterCreation::m_character) {
+        return luaL_error(L, "Character creation is not initialized");
+    }
 
     for (int32_t i = 0; i < count; i++) {
         ChrClassesRec* classRec = i >= 0 && i < g_chrClassesDB.m_numRecords ? &g_chrClassesDB.m_records[i] : nullptr;
@@ -424,6 +432,12 @@ static int32_t Script_GetCreateBackgroundModel(lua_State* L) {
 // OFFSET: 0x004E1880
 static int32_t Script_GetAvailableRaces(lua_State* L) {
     uint32_t count = CCharacterCreation::m_races.Count();
+    if (count > INT_MAX / 3 || !lua_checkstack(L, static_cast<int>(count * 3))) {
+        return luaL_error(L, "Too many races to return");
+    }
+    if (!CCharacterCreation::m_character) {
+        return luaL_error(L, "Character creation is not initialized");
+    }
 
     for (uint32_t i = 0; i < count; i++) {
         lua_pushstring(L, CGUnit_C::GetDisplayRaceNameFromRecord(g_chrRacesDB.GetRecord(CCharacterCreation::m_races.m_data[i]), CCharacterCreation::m_character->m_data.m_preferences.m_sexID, nullptr));
@@ -443,11 +457,17 @@ static int32_t Script_GetAvailableRaces(lua_State* L) {
 // OFFSET: 0x004E19A0
 static int32_t Script_GetClassesForRace(lua_State* L) {
     uint32_t count = CCharacterCreation::m_classes.Count();
+    if (count > INT_MAX / 3 || !lua_checkstack(L, static_cast<int>(count * 3))) {
+        return luaL_error(L, "Too many classes to return");
+    }
+    if (!CCharacterCreation::m_character) {
+        return luaL_error(L, "Character creation is not initialized");
+    }
 
     for (uint32_t i = 0; i < count; i++) {
         ChrClassesRec* classRec = i < CCharacterCreation::m_classes.Count() ? CCharacterCreation::m_classes.m_data[i] : nullptr;
         const char* name = CGUnit_C::GetDisplayClassNameFromRecord(classRec, CCharacterCreation::m_character->m_data.m_preferences.m_sexID, nullptr);
-        bool available = ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion;
+        bool available = classRec && ClientServices::Connection()->m_accountExpansion >= classRec->m_requiredExpansion;
 
         if (name) {
             lua_pushstring(L, name);
@@ -492,6 +512,9 @@ static int32_t Script_SetSelectedClass(lua_State* L) {
 
     int32_t index = static_cast<int32_t>(lua_tonumber(L, 1)) - 1;
     ChrClassesRec* classRec = index >= 0 && index < g_chrClassesDB.m_numRecords ? &g_chrClassesDB.m_records[index] : nullptr;
+    if (!classRec) {
+        return luaL_error(L, "Invalid class index");
+    }
     CCharacterCreation::SetSelectedClass(classRec->m_id);
     return 0;
 }

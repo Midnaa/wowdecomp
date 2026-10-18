@@ -1,4 +1,5 @@
 #include "CSimpleModelFFX.h"
+#include "AscensionCharacterCreation.h"
 #include <cstdint>
 #include <new>
 #include <typeinfo>
@@ -108,7 +109,7 @@ void CSimpleModelFFX::Render(void* arg) {
     clearColor.a = 0xFF;
     GxSceneClear(GxBufferBit_Color | GxBufferBit_Depth, clearColor);
 
-    if (model->m_model) {
+    if (model->m_model && !AscensionCharacterCreation_Render(model)) {
         CSimpleModel::RenderModel(model);
     }
 

@@ -25,6 +25,11 @@ lua_State* s_context;
 
 // STATIC: 0x00D3F790
 static int64_t s_scriptTimeUsed;
+static void (*s_errorObserver)(const char*) = nullptr;
+
+void FrameScript_SetErrorObserver(void (*observer)(const char*)) {
+    s_errorObserver = observer;
+}
 
 // STATIC: 0x00D3F798
 static int32_t s_scriptProfileEnabled;
@@ -1107,6 +1112,9 @@ static int32_t FrameScript_HandleError(lua_State* L) {
     }
 
     const char* message = lua_tostring(L, -1);
+    if (s_errorObserver) {
+        s_errorObserver(message);
+    }
     const char* marker = SStrStr(message, "*:");
     const char* object = FrameScript_GetCurrentObject(L, 1);
 

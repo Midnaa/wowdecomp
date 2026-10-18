@@ -1,4 +1,5 @@
 #include "LFGInfo.h"
+#include "WoW/Source/UIUtil/AscensionUI.h"
 #include "Engine/Source/Base/CDataStore.h"
 #include "Engine/Source/lua-5.1/src/lauxlib.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
@@ -36,7 +37,11 @@ static float s_lastJoinTime;
 // VERIFY: 7da483d6 auto
 // OFFSET: 0x00552940
 uint8_t CGLookingForGroup::GetClassRoles(uint32_t classID) {
-    return s_classRoles[classID - 1];
+    uint8_t roles;
+    if (AscensionUI_GetClassRoles(classID, roles)) {
+        return roles;
+    }
+    return classID > 0 && classID <= sizeof(s_classRoles) ? s_classRoles[classID - 1] : 0;
 }
 
 // VERIFY: 29999d79 manual

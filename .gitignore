@@ -412,6 +412,7 @@ FodyWeavers.xsd
 CMakeSettings.json
 
 # Local game installation, assets, settings, and caches (never source).
+/build/
 /client/
 /[Dd]ata/
 /Interface/

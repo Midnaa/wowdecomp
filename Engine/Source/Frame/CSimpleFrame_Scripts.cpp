@@ -646,6 +646,19 @@ static int32_t Script_CanChangeAttribute(lua_State* L) {
     return 1;
 }
 
+static int32_t Script_GetAllAttributes(lua_State* L) {
+    CSimpleFrame* frame = static_cast<CSimpleFrame*>(FrameScript_GetObjectThis(L, CSimpleFrame::GetObjectType()));
+    lua_newtable(L);
+    for (FRAMEATTR* attr = frame->m_attributes.Head(); attr; attr = frame->m_attributes.Next(attr)) {
+        if (attr->m_luaRef != LUA_NOREF && attr->m_luaRef != LUA_REFNIL) {
+            lua_pushstring(L, attr->m_key.m_str);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, attr->m_luaRef);
+            lua_settable(L, -3);
+        }
+    }
+    return 1;
+}
+
 // VERIFY: da0c30ad manual
 // OFFSET: 0x0049F2D0
 static int32_t Script_GetAttribute(lua_State* L) {
@@ -2004,6 +2017,7 @@ static FrameScript_Method s_ScriptMethods[] = {
     { "AllowAttributeChanges", &Script_AllowAttributeChanges },
     { "CanChangeAttribute", &Script_CanChangeAttribute },
     { "GetAttribute", &Script_GetAttribute },
+    { "GetAllAttributes", &Script_GetAllAttributes },
     { "SetAttribute", &Script_SetAttribute },
     { "GetEffectiveScale", &Script_GetEffectiveScale },
     { "GetScale", &Script_GetScale },

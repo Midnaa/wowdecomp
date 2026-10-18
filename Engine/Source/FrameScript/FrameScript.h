@@ -67,6 +67,7 @@ void FrameScript_MemoryCleanup();
 void FrameScript_PackVariable(lua_State* L, const char* name, int32_t depth, char* buffer, uint32_t bufferLen);
 int32_t FrameScript_PrintVariable(HOSFILE file, const char* name);
 void FrameScript_RegisterFunction(const char* name, lua_CFunction function);
+void FrameScript_SetErrorObserver(void (*observer)(const char*));
 void FrameScript_RegisterScriptEvent(FrameScript_Object* object, FrameScript_EventObject* event);
 void FrameScript_ReleaseFunction(int32_t function);
 void FrameScript_ResetCPUUsage();
