@@ -19,7 +19,7 @@ int Catalog(lua_State* L) {
     if (table >= 7) { return luaL_error(L, "Invalid tutorial table"); }
     const auto& data = s_tables[table];
     lua_newtable(L);
-    const uint32_t widths[] = { 45, 2, 4, 8, 17, 3, 19 };
+    const uint32_t widths[] = { 45, 2, 4, 8, 17, 3, 3 };
     for (uint32_t row = 0; row < data.Count(); ++row) {
         uint32_t id = data.Value(row, 0);
         auto patch = s_state.patches.find(id);

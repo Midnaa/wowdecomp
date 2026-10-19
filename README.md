@@ -192,6 +192,16 @@ cmake --build build/ascension-tests --config Release
 ctest --test-dir build/ascension-tests -C Release --output-on-failure
 ```
 
+The current compatibility build also loads the original tutorial and character
+advancement tables, implements tutorial filtering/rewards and talent upload state,
+and reads prestige and average item level from server object-addon fields.
+Character stats use real unit auras and cached item metadata; custom statistic
+queries are sent in the original wire format, but the local server still needs
+its group-query response implementation for complete custom statistics.
+The archive's sound-kit debug browser is hidden after FrameXML loads; `/soundkit`
+can still open it. See [the session audit](ASCENSION-SESSION-AUDIT.md) for remaining
+unsupported systems. These changes preserve archive scripts and assets.
+
 ## Running
 
 1. Copy the `Data` folder of your 3.3.5a client into `bin/Win/`, so you have `bin/Win/Data/`.

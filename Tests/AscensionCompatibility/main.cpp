@@ -9,6 +9,7 @@
 #include "WoW/Source/UIUtil/AscensionAdvancementState.h"
 #include "WoW/Source/UIUtil/AscensionTutorialState.h"
 #include "WoW/Source/UIUtil/AscensionWorldState.h"
+#include "WoW/Source/UIUtil/AscensionObjectAddonState.h"
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -51,6 +52,29 @@ static void CheckGameUIData() {
     Require(!std::strcmp(decoded.String(0, 2), "Hi"), "Localized field not decoded");
     Require(!decoded.AssignFormatted(packed.data(), packed.size()-1, "bdLd"), "Truncated packed table accepted");
 
+    AscensionWorldState progress;
+    std::vector<uint8_t> progressUpdate;
+    Append(progressUpdate, uint32_t(8));
+    for (uint32_t i = 0; i < 8; ++i) {
+        Append(progressUpdate, uint32_t(2)); Append(progressUpdate, uint32_t(1)); Append(progressUpdate, i+2);
+    }
+    Require(progress.ReadProgress(progressUpdate.data(), progressUpdate.size()) && progress.completed[7] == 9,
+        "Manastorm completed levels not decoded");
+    Require(!progress.ReadProgress(progressUpdate.data(), progressUpdate.size()-1) && progress.completed[7] == 9,
+        "Truncated Manastorm update replaced progress");
+    AscensionObjectAddonState addonState;
+    std::vector<uint8_t> addonUpdate;
+    Append(addonUpdate, uint64_t(42)); Append(addonUpdate, uint32_t(2)); Append(addonUpdate, uint32_t(7));
+    Require(addonState.Read(addonUpdate.data(), addonUpdate.size()) && addonState.Get(42, 2) == 7,
+        "Prestige addon field not decoded");
+    for (size_t size = 0; size < addonUpdate.size(); ++size) {
+        if (size == 8) continue;
+        Require(!addonState.Read(addonUpdate.data(), size) && addonState.Get(42, 2) == 7,
+            "Truncated addon update changed existing fields");
+    }
+    Append(addonUpdate, uint32_t(4096)); Append(addonUpdate, uint32_t(99));
+    Require(!addonState.Read(addonUpdate.data(), addonUpdate.size()) && addonState.Get(42, 2) == 7,
+        "Invalid addon field accepted");
     AscensionAdvancementState advancement;
     std::vector<uint8_t> known;
     Append(known, uint32_t(1)); Append(known, uint32_t(4037)); Append(known, uint32_t(1));
@@ -267,7 +291,27 @@ int main(int argc, char** argv) {
         const uint8_t emptyAddons[] = { 0, 0, 0, 0 };
         Require(addons.Read(emptyAddons, sizeof(emptyAddons)) && addons.entries.empty(), "Empty addon list rejected");
 
-        if (argc > 1) {
+        if (argc > 2 && std::string(argv[1]) == "--archive-tables") {
+            const std::pair<const char*, const char*> fixtures[] = {
+                { "Tutorial", "dddddddddddddddddddddddddddddddddddddLLLddddd" },
+                { "TutorialCategories", "dL" }, { "TutorialRewards", "dddd" },
+                { "TutorialObjectives", "dddddddL" }, { "TutorialKeywords", "ddddddLLLdddddddd" },
+                { "MentorSpecializations", "ddL" }, { "TutorialObjectiveTypes", "ddL" },
+                { "CharacterAdvancement", "dddddddddddddddddddddddddddddddddddddddddddddddLdLLbbddddbdddddddddddddddddbbbbbddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+                { "CharacterAdvancementClassTypes", "ddddddL" },
+                { "CharacterAdvancementTabTypes", "ddL" }, { "CharacterAdvancementEssence", "ddddddddd" }
+            };
+            for (const auto& fixture : fixtures) {
+                std::ifstream file(std::string(argv[2]) + "/" + fixture.first + ".dbc", std::ios::binary);
+                std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(file)), {});
+                Require(table.AssignFormatted(bytes.data(), bytes.size(), fixture.second), fixture.first);
+                Require(table.Count() > 0, "Archive table contains no rows");
+                if (std::string(fixture.first) == "Tutorial") {
+                    Require(*table.String(0, 37), "Tutorial content missing after decoding");
+                }
+                std::cout << "Validated " << fixture.first << ": " << table.Count() << " rows\n";
+            }
+        } else if (argc > 1) {
             std::ifstream file(argv[1], std::ios::binary);
             std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), {});
             Require(table.Assign(data.data(), data.size(), 65), "Local ChrSpecs.dbc layout mismatch");

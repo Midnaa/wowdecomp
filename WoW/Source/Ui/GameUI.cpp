@@ -1777,6 +1777,7 @@ void CGGameUI::InitializeFrameXML() {
     FrameXML_RegisterLoadProgressCallback(LoadingScreenXMLCallback, nullptr, LoadAddOnFileCount() + numFiles);
     FrameXML_FreeHashNodes();
     FrameXML_CreateFrames("Interface\\FrameXML\\FrameXML.toc", nullptr, &md5, &status);
+    AscensionUI_OnWorldUILoaded();
 
     if (SFile::FileExistsEx("Interface\\FrameXML\\Bindings.xml", 1)) {
         CGUIBindings::s_bindings->Load("Interface\\FrameXML\\Bindings.xml", &md5, &status);

@@ -953,7 +953,7 @@ bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
         && opcode != 0x0673 && opcode != 0x09C2 && opcode != 0x09C4 && opcode != 0x09C5
         && opcode != 0x0725 && opcode != 0x0726 && opcode != 0x072C
         && opcode != 0x06A5 && opcode != 0x06AF && opcode != 0x06B0 && opcode != 0x06B1
-        && opcode != 0x090B && opcode != 0x0925 && opcode != 0x0596 && opcode != 0x0660)) {
+        && opcode != 0x065D && opcode != 0x0578 && opcode != 0x090B && opcode != 0x0925 && opcode != 0x0596 && opcode != 0x0660)) {
         return false;
     }
     if (message->m_read <= message->m_size) {
@@ -1015,4 +1015,10 @@ bool AscensionUI_ProcessMessage(uint16_t opcode, CDataStore* message) {
     }
     message->Reset();
     return true;
+}
+
+void AscensionUI_OnWorldUILoaded() {
+    if (s_enabled) {
+        FrameScript_Execute("if SoundKitBrowser then SoundKitBrowser:Hide() end", "Ascension debug window startup", nullptr);
+    }
 }

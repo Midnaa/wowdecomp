@@ -6,6 +6,23 @@ struct AscensionWorldState {
     uint32_t modes = 0, depth = 0, scene = 0;
     std::array<uint32_t, 7> arena{};
     std::map<uint32_t, uint32_t> challenges;
+    std::array<uint32_t, 8> completed{};
+    bool ReadProgress(const void* data, size_t size) {
+        AscensionPacketReader packet(data, size);
+        uint32_t types, count, level;
+        std::array<uint32_t, 8> next{};
+        if (!packet.Read(types) || types != 8) return false;
+        for (auto& highest : next) {
+            if (!packet.Read(count) || count > 4096) return false;
+            for (uint32_t i = 0; i < count; ++i) {
+                if (!packet.Read(level)) return false;
+                if (level > highest) highest = level;
+            }
+        }
+        if (!packet.Done()) return false;
+        completed = next;
+        return true;
+    }
     bool ReadModes(const void* data, size_t size) {
         AscensionPacketReader packet(data, size);
         uint32_t next;

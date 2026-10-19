@@ -7,6 +7,8 @@
 #include "AscensionProgressUI.h"
 #include "AscensionTutorialUI.h"
 #include "AscensionWorldState.h"
+#include "AscensionObjectAddonState.h"
+#include <cmath>
 #include <algorithm>
 #include <cctype>
 #include <set>
@@ -22,6 +24,7 @@
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/DB/DBClient/DBCacheInstances.h"
 #include "WoW/Source/DB/Rec/SpellRec.h"
+#include "WoW/Source/DB/Rec/ItemRec.h"
 #include "WoW/Source/DB/Rec/SkillLineRec.h"
 #include "WoW/Source/DB/Rec/SkillRaceClassInfoRec.h"
 #include "WoW/Source/Glue/CGlueMgr.h"
@@ -46,8 +49,36 @@ AscensionAuraAmounts s_auraAmounts;
 AscensionDBC s_chargeLinks, s_chargeCategories;
 AscensionSpellCharges s_charges;
 AscensionWorldState s_world;
+AscensionObjectAddonState s_objectAddons;
 AscensionDBC s_challengeRules, s_ruleTypes, s_spellRanks;
 
+int UnitHasAura(lua_State* L) {
+    auto* unit = GetUnitFromName(luaL_checkstring(L, 1));
+    lua_pushboolean(L, unit && unit->GetAuraIndex(static_cast<uint32_t>(luaL_checkinteger(L, 2))) >= 0);
+    return 1;
+}
+int GetPrestigeLevel(lua_State* L) {
+    auto guid = GetGuidByKeyword(luaL_optstring(L, 1, "player"));
+    lua_pushnumber(L, s_objectAddons.Get(guid.m_guid, 2));
+    lua_pushnumber(L, s_objectAddons.Get(guid.m_guid, 3));
+    return 2;
+}
+int UnitAverageItemLevel(lua_State* L) {
+    auto guid = GetGuidByKeyword(luaL_checkstring(L, 1));
+    uint32_t bits = s_objectAddons.Get(guid.m_guid, 5);
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    lua_pushnumber(L, std::isfinite(value) && value >= 0 ? value : 0);
+    return 1;
+}
+int RequestStatisticQuery(lua_State* L) {
+    uint32_t group = static_cast<uint32_t>(luaL_checkinteger(L, 1));
+    if (!ClientServices::Connection()->m_authenticated || CGlueMgr::s_scriptFunctionsLoaded) return 0;
+    CDataStore packet;
+    packet.Put(uint32_t(0x0777)); packet.Put(group);
+    packet.Finalize(); ClientServices::Send2(&packet);
+    return 0;
+}
 int GetCustomGameMode(lua_State* L) { lua_pushnumber(L, s_world.modes); return 1; }
 int ArenaRewards(lua_State* L) {
     const char* brackets[] = { "BRACKET_NONE", "BRACKET_COMBATANT", "BRACKET_CHALLENGER", "BRACKET_RIVAL", "BRACKET_DUELIST", "BRACKET_GLADIATOR" };
@@ -76,6 +107,14 @@ int HasChallengeRule(lua_State* L) {
     lua_pushboolean(L, has); return 1;
 }
 int IsInManastorm(lua_State* L) { lua_pushboolean(L, s_world.depth != 0); return 1; }
+int GetMaxCompletedLevels(lua_State* L) {
+    if (GetGuidByKeyword(luaL_optstring(L, 1, "player")) != GetGuidByKeyword("player")) return 0;
+    uint32_t highest = 0;
+    for (auto value : s_world.completed) highest = std::max(highest, value);
+    lua_pushnumber(L, highest);
+    for (uint32_t i = 0; i < 4; ++i) lua_pushnumber(L, std::max(s_world.completed[i], s_world.completed[i+4]));
+    return 5;
+}
 int GetManastormDepth(lua_State* L) { lua_pushnumber(L, s_world.depth); return 1; }
 int GetMaxLearnableRank(lua_State* L) {
     int firstArg = lua_istable(L, 1) ? 2 : 1;
@@ -250,6 +289,43 @@ int SetNamePlateCastBarMode(lua_State* L) {
     return 0;
 }
 
+uint32_t ItemPower(const ItemStats_C* item, const char* prefix) {
+    uint32_t total = 0;
+    if (!item) return total;
+    for (uint32_t i = 0; i < 5; ++i) {
+        if (item->m_spellTrigger[i] != 1) continue;
+        SpellRec spell;
+        if (!g_spellDB.GetRecord(item->m_spellId[i], &spell) || !spell.m_name) continue;
+        const char* name = spell.m_name;
+        size_t length = std::strlen(prefix);
+        if (std::strncmp(name, prefix, length)) continue;
+        const char* digit = name + length;
+        uint32_t amount = 0;
+        bool valid = *digit >= '0' && *digit <= '9';
+        while (*digit >= '0' && *digit <= '9' && amount <= 1000) amount = amount * 10 + (*digit++ - '0');
+        if (valid && amount <= 1000 && digit[0] == ')' && digit[1] == 0) total += amount;
+    }
+    return total;
+}
+int GetItemInfoInstant(lua_State* L) {
+    int32_t id = static_cast<int32_t>(luaL_checkinteger(L, 1));
+    auto* base = g_itemDB.GetRecord(id);
+    auto* item = g_itemDBCache.GetRecord(id, WOWGUID(), nullptr, nullptr, false);
+    if (!base && !item) return 0;
+    lua_newtable(L);
+    auto field = [L](const char* name, uint32_t value) { lua_pushnumber(L, value); lua_setfield(L, -2, name); };
+    field("itemID", id);
+    field("classID", item ? item->m_class : base->m_classID);
+    field("subclassID", item ? item->m_subClass : base->m_subclassID);
+    field("inventoryType", item ? item->m_inventoryType : base->m_inventoryType);
+    field("displayID", item ? item->m_displayId : base->m_displayInfoID);
+    if (item) {
+        field("quality", item->m_quality); field("itemLevel", item->m_itemLevel);
+        field("pvePower", ItemPower(item, "PvE Power (+"));
+        field("pvpPower", ItemPower(item, "PvP Power (+"));
+    }
+    return 1;
+}
 int GetItemQuality(lua_State* L) {
     int32_t id = static_cast<int32_t>(luaL_checkinteger(L, 1));
     auto* item = g_itemDBCache.GetRecord(id, WOWGUID(), nullptr, nullptr, false);
@@ -397,10 +473,13 @@ void AscensionGameUI_Register() {
         { "CanPerformAction", CanPerformAction }, { "UnitCastingSpellID", UnitCastingSpellID },
         { "UnitIsLevelScaling", UnitIsLevelScaling }, { "UnitGroupRolesAssignedKey", UnitGroupRolesAssignedKey },
         { "GetUnitPrimaryStat", GetUnitPrimaryStat },
+        { "GetPrestigeLevel", GetPrestigeLevel }, { "UnitAverageItemLevel", UnitAverageItemLevel },
+        { "RequestStatisticQuery", RequestStatisticQuery },
         { "GetCustomGameMode", GetCustomGameMode }, { "Ascension_GetArenaRewardInfo", ArenaRewards },
         { "RegisterInterfaceEvent", RegisterInterfaceEvent }, { "SignalEvent", SignalEvent },
         { "SetCameraFoV", SetCameraFoV }, { "GetItemQuality", GetItemQuality },
         { "SetNamePlateCastBarMode", SetNamePlateCastBarMode },
+        { "GetItemInfoInstant", GetItemInfoInstant },
         { "GetItemName", GetItemName }, { "GetSkillInfo", GetSkillInfo },
         { "GetSpellCharges", GetSpellCharges }, { nullptr, nullptr }
     };
@@ -420,9 +499,11 @@ void AscensionGameUI_Register() {
     for (const auto& entry : { std::make_pair("Ascension_QueryArenaRewardInfo", 0x053E), std::make_pair("_AscensionQueryInstanceBinds", 0x06FD) }) {
         lua_pushinteger(L, entry.second); lua_pushcclosure(L, SendEmptyRequest, 1); lua_setglobal(L, entry.first);
     }
+    const luaL_Reg aura[] = { { "UnitHasAura", UnitHasAura }, { nullptr, nullptr } };
+    luaL_register(L, "C_Aura", aura); lua_pop(L, 1);
     const luaL_Reg challenge[] = { { "HasChallengeRule", HasChallengeRule }, { nullptr, nullptr } };
     luaL_register(L, "C_Challenge", challenge); lua_pop(L, 1);
-    const luaL_Reg manastorm[] = { { "IsInManastorm", IsInManastorm }, { "GetCurrentDepth", GetManastormDepth }, { nullptr, nullptr } };
+    const luaL_Reg manastorm[] = { { "IsInManastorm", IsInManastorm }, { "GetCurrentDepth", GetManastormDepth }, { "GetMaxCompletedLevels", GetMaxCompletedLevels }, { nullptr, nullptr } };
     luaL_register(L, "C_Manastorm", manastorm); lua_pop(L, 1);
     const luaL_Reg spells[] = { { "IsHelpfulSpell", IsHelpfulSpell }, { "HasRuneUI", HasRuneUI }, { "GetMaxLearnableRank", GetMaxLearnableRank }, { nullptr, nullptr } };
     luaL_register(L, "C_Spell", spells);
@@ -455,12 +536,15 @@ end
 void AscensionGameUI_ResetRealm() {
     AscensionTutorialUI_Reset();
     s_world = {};
+    s_objectAddons.units.clear();
     AscensionProgressUI_Reset();
     s_auraAmounts.units.clear();
     s_charges.entries.clear();
 }
 
 bool AscensionGameUI_ProcessMessage(uint16_t opcode, const void* data, size_t size) {
+    if (opcode == 0x065D) { s_world.ReadProgress(data, size); return true; }
+    if (opcode == 0x0578) { s_objectAddons.Read(data, size); return true; }
     if (AscensionProgressUI_ProcessMessage(opcode, data, size)) { return true; }
     if (AscensionTutorialUI_ProcessMessage(opcode, data, size)) { return true; }
     if (opcode == 0x090B || opcode == 0x0925 || opcode == 0x0596 || opcode == 0x0660) {
